@@ -129,32 +129,7 @@ class WebScripts {
 })()
 ''';
 
-  // ⭐ قراءة الـ options الحقيقية للـ page size
-  static const readPageSizeInfo = r'''
-(function(){
-  try {
-    var sels = document.querySelectorAll('select.select, select');
-    for (var i=0;i<sels.length;i++){
-      var s = sels[i];
-      var vals = [];
-      for (var j=0;j<s.options.length;j++){
-        vals.push(String(s.options[j].value));
-      }
-      // نعتبره الـ page size لو عنده 5000 أو 1000 أو 500
-      if (vals.indexOf('5000') >= 0 || vals.indexOf('1000') >= 0 ||
-          vals.indexOf('500') >= 0){
-        return JSON.stringify({
-          current: String(s.value),
-          options: vals
-        });
-      }
-    }
-    return 'no-select';
-  } catch(e){ return 'err:' + e.message; }
-})()
-''';
-
-  // ⭐ اختيار أكبر قيمة في الـ page size (مش لازم 5000)
+  // ⭐ setMaxPageSize — أقصى قيمة في أي select
   static const setMaxPageSize = r'''
 (function(){
   try {
@@ -162,125 +137,125 @@ class WebScripts {
     for (var i=0;i<sels.length;i++){
       var s = sels[i];
       var vals = [];
-      for (var j=0;j<s.options.length;j++){
-        vals.push(String(s.options[j].value));
-      }
+      for (var j=0;j<s.options.length;j++) vals.push(String(s.options[j].value));
       if (vals.indexOf('5000') < 0 && vals.indexOf('1000') < 0 &&
-          vals.indexOf('500') < 0){
-        continue;
-      }
-
-      // دور على أكبر قيمة
-      var maxIdx = -1;
-      var maxNum = -1;
+          vals.indexOf('500') < 0) continue;
+      
+      var maxIdx = -1, maxNum = -1;
       for (var k=0;k<s.options.length;k++){
         var v = String(s.options[k].value);
         var n = parseInt(v.replace(/,/g,''), 10);
-        if (!isNaN(n) && n > maxNum){
-          maxNum = n;
-          maxIdx = k;
-        }
+        if (!isNaN(n) && n > maxNum){ maxNum = n; maxIdx = k; }
       }
-      if (maxIdx < 0) return 'no-max';
+      if (maxIdx < 0) continue;
       var maxVal = String(s.options[maxIdx].value);
-
       try {
         var setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
         setter.call(s, maxVal);
       } catch(e){ s.value = maxVal; }
       s.selectedIndex = maxIdx;
-      for (var m=0;m<s.options.length;m++){
-        s.options[m].selected = (m === maxIdx);
-      }
+      for (var m=0;m<s.options.length;m++) s.options[m].selected = (m === maxIdx);
       s.dispatchEvent(new Event('input', {bubbles:true}));
       s.dispatchEvent(new Event('change', {bubbles:true}));
-
-      return 'ok|set=' + maxVal + '|total=' + vals.length;
+      return 'ok|set=' + maxVal;
     }
     return 'no-select';
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
 
-  // ⭐ readStats مع debug شامل
-  static const readStats = r'''
+  // ⭐⭐⭐ Pagination helpers
+  static const getPaginationInfo = r'''
 (function(){
   try {
-    var debug = [];
-    var table = document.querySelector('table');
-    if (!table){
-      return JSON.stringify({
-        total: 0, available: 0, added: 0,
-        rowsOnPage: 0, clientIdx: -1,
-        debug: 'NO-TABLE'
-      });
-    }
-
-    // ══ paginator ══
     var pg = document.querySelector('.pg-left');
-    var pgText = '';
-    var totalFromPg = 0;
-    if (pg){
-      pgText = (pg.innerText || pg.textContent || '').trim();
-      var m = pgText.match(/of\s+([\d,]+)/i);
-      if (m) totalFromPg = parseInt(m[1].replace(/,/g,''), 10) || 0;
+    var text = pg ? (pg.innerText||'').trim() : '';
+    var total = 0;
+    var m = text.match(/of\s+([\d,]+)/i);
+    if (m) total = parseInt(m[1].replace(/,/g,''), 10);
+
+    var rows = document.querySelectorAll('table tr.vrow').length;
+
+    var hasNext = false;
+    document.querySelectorAll('.paginator-controls button').forEach(function(b){
+      if ((b.getAttribute('title')||'') === 'Next' && !b.disabled) hasNext = true;
+    });
+
+    return JSON.stringify({
+      total: total,
+      rowsPerPage: rows,
+      hasNext: hasNext,
+      pgText: text
+    });
+  } catch(e){ return 'err:' + e.message; }
+})()
+''';
+
+  static const clickFirstPage = r'''
+(function(){
+  var btns = document.querySelectorAll('.paginator-controls button');
+  for (var i=0;i<btns.length;i++){
+    if ((btns[i].getAttribute('title')||'') === 'First'){
+      if (btns[i].disabled) return 'disabled';
+      btns[i].click();
+      return 'ok';
     }
-    debug.push('pg="' + pgText.substring(0, 60) + '"');
-    debug.push('totalFromPg=' + totalFromPg);
+  }
+  return 'no-btn';
+})()
+''';
 
-    // ══ عدد الصفوف الحقيقي ══
-    var rows = table.querySelectorAll('tr.vrow');
-    debug.push('rows=' + rows.length);
+  static const clickNextPage = r'''
+(function(){
+  var btns = document.querySelectorAll('.paginator-controls button');
+  for (var i=0;i<btns.length;i++){
+    if ((btns[i].getAttribute('title')||'') === 'Next'){
+      if (btns[i].disabled) return 'disabled';
+      btns[i].click();
+      return 'ok';
+    }
+  }
+  return 'no-btn';
+})()
+''';
 
-    // ══ clientIdx ══
+  /// قراءة إحصائيات الصفحة الحالية فقط
+  static const readCurrentPageStats = r'''
+(function(){
+  try {
+    var table = document.querySelector('table');
+    if (!table) return JSON.stringify({available:0, added:0, rows:0});
+
     var clientIdx = -1;
     var ths = table.querySelectorAll('th');
-    var thTexts = [];
     for (var i=0;i<ths.length;i++){
-      var clone = ths[i].cloneNode(true);
-      var spans = clone.querySelectorAll('span, svg');
-      for (var x=0;x<spans.length;x++) spans[x].remove();
-      var t = (clone.innerText || clone.textContent || '').trim();
-      thTexts.push('[' + i + ']=' + t);
-      if (t === 'Client' && clientIdx < 0){
-        clientIdx = i;
-      }
+      var c = ths[i].cloneNode(true);
+      var ex = c.querySelectorAll('span, svg');
+      for (var x=0;x<ex.length;x++) ex[x].remove();
+      var t = (c.innerText||'').trim();
+      if (t === 'Client'){ clientIdx = i; break; }
     }
-    debug.push('ths=' + thTexts.join(','));
-    debug.push('clientIdx=' + clientIdx);
 
-    // ══ عد المتاح والمضاف ══
+    var rows = table.querySelectorAll('tr.vrow');
     var available = 0, added = 0;
-    var samples = [];
-
     if (clientIdx >= 0){
       for (var r=0;r<rows.length;r++){
         var tds = rows[r].querySelectorAll('td');
         if (clientIdx >= tds.length) continue;
-
-        var clone2 = tds[clientIdx].cloneNode(true);
-        var extra = clone2.querySelectorAll('button, svg');
-        for (var k=0;k<extra.length;k++) extra[k].remove();
-        var v = (clone2.innerText || clone2.textContent || '').trim();
-
-        if (r < 5) samples.push('[' + r + ']="' + v.substring(0,20) + '"');
-
-        if (v === '-' || v === '' || v === '—' || v === '–'){
-          available++;
-        } else {
-          added++;
-        }
+        var c2 = tds[clientIdx].cloneNode(true);
+        var ex2 = c2.querySelectorAll('button, svg');
+        for (var k=0;k<ex2.length;k++) ex2[k].remove();
+        var v = (c2.innerText||'').trim();
+        if (v === '-' || v === '' || v === '—' || v === '–') available++;
+        else added++;
       }
     }
-    debug.push('samples=' + samples.join(' '));
 
     return JSON.stringify({
-      total: totalFromPg,
       available: available,
       added: added,
-      rowsOnPage: rows.length,
-      clientIdx: clientIdx,
-      debug: debug.join('|')
+      rows: rows.length,
+      clientIdx: clientIdx
     });
   } catch(e){ return 'err:' + e.message; }
 })()
@@ -308,12 +283,10 @@ class WebScripts {
       var row = rows[r];
       var tds = row.querySelectorAll('td');
       if (clientIdx >= tds.length) continue;
-
       var clone2 = tds[clientIdx].cloneNode(true);
       var extra = clone2.querySelectorAll('button, svg');
       for (var k=0;k<extra.length;k++) extra[k].remove();
       var v = (clone2.innerText || clone2.textContent || '').trim();
-
       if (v === '-' || v === '' || v === '—' || v === '–'){
         var cb = row.querySelector('input.checkbox');
         if (cb && !cb.checked){ cb.click(); checked++; }
@@ -324,7 +297,7 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Add Button ═══════
+  // ═══════ Add Flow ═══════
   static const clickAddButton = r'''
 (function(){
   try {
@@ -351,9 +324,7 @@ class WebScripts {
         setter.call(s, '7-1');
       } catch(e){ s.value = '7-1'; }
       s.selectedIndex = idx;
-      for (var k=0;k<s.options.length;k++){
-        s.options[k].selected = (k === idx);
-      }
+      for (var k=0;k<s.options.length;k++) s.options[k].selected = (k === idx);
       s.dispatchEvent(new Event('input', {bubbles:true}));
       s.dispatchEvent(new Event('change', {bubbles:true}));
       return 'ok';
@@ -371,9 +342,7 @@ class WebScripts {
       var bs = document.querySelectorAll('.modal-body button.ss-trigger');
       if (bs.length > 0) b = bs[0];
     }
-    if (!b){
-      b = document.querySelector('.modal-body > div:nth-child(2) button');
-    }
+    if (!b) b = document.querySelector('.modal-body > div:nth-child(2) button');
     if (!b) return 'no-btn';
     b.click();
     return 'ok';
@@ -409,10 +378,7 @@ class WebScripts {
     for (var i=0;i<items.length;i++){
       var s = items[i].querySelector('span');
       var t = s ? (s.innerText||'').trim() : '';
-      if (t === name){
-        items[i].click();
-        return 'ok';
-      }
+      if (t === name){ items[i].click(); return 'ok'; }
     }
     return 'not-found';
   } catch(e){ return 'err:' + e.message; }
