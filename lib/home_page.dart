@@ -38,6 +38,12 @@ class _HomePageState extends State<HomePage> {
   bool _adding = false;
   bool _addDone = false;
 
+  // ⭐ صندوق التشخيص
+  String _diagPct = '';
+  String _diagPageSize = '';
+  String _diagRows = '';
+  String _diagPgText = '';
+
   static const _countOptions = [10, 25, 50, 100, 200];
 
   @override
@@ -109,6 +115,10 @@ class _HomePageState extends State<HomePage> {
       _selectedRange = null;
       _filterApplied = false;
       _stats = RangeStats(rangeName: '');
+      _diagPct = '';
+      _diagPageSize = '';
+      _diagRows = '';
+      _diagPgText = '';
     });
     await _loadRanges();
   }
@@ -166,20 +176,26 @@ class _HomePageState extends State<HomePage> {
     setState(() => _filtering = false);
   }
 
-  // ═══════ Load Stats — بسيط وسريع ═══════
+  // ═══════ Load Stats ═══════
   Future<void> _loadStats() async {
     setState(() => _loadingStats = true);
     _log('═══ تجهيز الإحصائيات ═══');
 
-    // 1) غيّر page size لـ 5000
+    // 1) اقرأ التشخيص الأول
+    await _refreshDiagnostics();
+
+    // 2) غيّر page size لـ 5000
     final setRes = await widget.evalJs(WebScripts.setPageSize5000);
     _log('set5000: $setRes');
 
-    // 2) استنى التحميل (4 ثواني)
+    // 3) استنى التحميل
     _log('⏳ استنى التحميل…');
     await Future.delayed(const Duration(seconds: 4));
 
-    // 3) اقرأ الإحصائيات
+    // 4) اقرأ التشخيص تاني
+    await _refreshDiagnostics();
+
+    // 5) اقرأ الإحصائيات
     final raw = await widget.evalJs(WebScripts.readStats);
     _log('stats: $raw');
 
@@ -198,6 +214,27 @@ class _HomePageState extends State<HomePage> {
     }
 
     setState(() => _loadingStats = false);
+  }
+
+  // ⭐ تحديث صندوق التشخيص
+  Future<void> _refreshDiagnostics() async {
+    // percentage
+    final pct = await widget.evalJs(WebScripts.diagPercent);
+    _diagPct = pct;
+
+    // page size الحالي
+    final ps = await widget.evalJs(WebScripts.diagPageSize);
+    _diagPageSize = ps;
+
+    // عدد الصفوف
+    final rows = await widget.evalJs(WebScripts.diagRows);
+    _diagRows = rows;
+
+    // pg-left text كامل
+    final pg = await widget.evalJs(WebScripts.diagPgText);
+    _diagPgText = pg;
+
+    if (mounted) setState(() {});
   }
 
   // ═══════ Add numbers ═══════
@@ -351,9 +388,11 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(height: 12),
                       _buildStatsRow(theme),
                       const SizedBox(height: 12),
+                      _buildDiagCard(theme),
+                      const SizedBox(height: 12),
                       _buildAddCard(theme),
                       const SizedBox(height: 12),
-                      LogPanel(logs: _logs, height: 200),
+                      LogPanel(logs: _logs, height: 160),
                       const SizedBox(height: 10),
                     ],
                   ),
@@ -519,6 +558,75 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       ],
+    );
+  }
+
+  // ⭐ صندوق التشخيص
+  Widget _buildDiagCard(ThemeData theme) {
+    return _card(
+      theme,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.bug_report_rounded,
+                  size: 16, color: theme.colorScheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                'التشخيص (اقرأ ده بنفسك)',
+                style: kNoDeco.copyWith(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.onSurface.withOpacity(0.85),
+                ),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: _refreshDiagnostics,
+                child: const Text('تحديث',
+                    style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          _diagLine(theme, 'pgText', _diagPgText),
+          _diagLine(theme, 'pageSize الحالي', _diagPageSize),
+          _diagLine(theme, 'عدد الصفوف', _diagRows),
+          _diagLine(theme, 'نسبة الإنجاز', _diagPct),
+        ],
+      ),
+    );
+  }
+
+  Widget _diagLine(ThemeData theme, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              '$label:',
+              style: kNoDeco.copyWith(
+                fontSize: 11,
+                color: theme.colorScheme.onSurface.withOpacity(0.55),
+              ),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(
+              value.isEmpty ? '—' : value,
+              style: kNoDeco.copyWith(
+                fontSize: 11,
+                fontFamily: 'monospace',
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
