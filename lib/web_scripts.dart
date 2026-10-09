@@ -129,150 +129,106 @@ class WebScripts {
 })()
 ''';
 
-  // ⭐⭐⭐ تغيير page size لـ 5000 — نفس طريقة IMS الأول
+  // ⭐ تغيير page size لـ 5000 (بسيط ومباشر)
   static const setPageSize5000 = r'''
 (function(){
   try {
-    // 1) ابحث عن select اللي فيه option value="5000"
-    var allSelects = document.querySelectorAll('select');
+    // ابحث عن select اللي فيه option value="5000"
+    var sels = document.querySelectorAll('select');
     var target = null;
-    var targetIdx = -1;
-    var info = [];
-
-    for (var i=0;i<allSelects.length;i++){
-      var s = allSelects[i];
-      var vals = [];
-      var found5000 = -1;
-      for (var j=0;j<s.options.length;j++){
-        vals.push(String(s.options[j].value));
-        if (String(s.options[j].value) === '5000') found5000 = j;
+    var optIdx = -1;
+    for (var i=0;i<sels.length;i++){
+      for (var j=0;j<sels[i].options.length;j++){
+        if (String(sels[i].options[j].value) === '5000'){
+          target = sels[i];
+          optIdx = j;
+          break;
+        }
       }
-      info.push('sel' + i + '=[' + vals.join(',') + ']');
-      if (found5000 >= 0){
-        target = s;
-        targetIdx = found5000;
-        break;
+      if (target) break;
+    }
+    if (!target) return 'no-select';
+
+    // Native setter (الأقوى مع Vue)
+    try {
+      var setter = Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype, 'value').set;
+      setter.call(target, '5000');
+    } catch(e){ target.value = '5000'; }
+
+    target.selectedIndex = optIdx;
+    for (var k=0;k<target.options.length;k++){
+      target.options[k].selected = (k === optIdx);
+    }
+
+    // كل الأحداث
+    target.dispatchEvent(new Event('input', {bubbles:true}));
+    target.dispatchEvent(new Event('change', {bubbles:true}));
+    target.dispatchEvent(new Event('blur', {bubbles:true}));
+
+    // Vue v-model events
+    try {
+      if (typeof target.onChange === 'function'){
+        target.onChange({target: target, currentTarget: target});
       }
-    }
+    } catch(e){}
 
-    if (!target) return 'no-select|' + info.join('|');
-
-    // 2) focus
-    try { target.focus(); } catch(e){}
-
-    // 3) native setter على selectedIndex
-    try {
-      var idxSetter = Object.getOwnPropertyDescriptor(
-        HTMLSelectElement.prototype, 'selectedIndex'
-      ).set;
-      idxSetter.call(target, targetIdx);
-    } catch(e){
-      target.selectedIndex = targetIdx;
-    }
-
-    // 4) native setter على value
-    try {
-      var vSetter = Object.getOwnPropertyDescriptor(
-        HTMLSelectElement.prototype, 'value'
-      ).set;
-      vSetter.call(target, '5000');
-    } catch(e){
-      target.value = '5000';
-    }
-
-    // 5) تأكيد يدوي
-    for (var m=0;m<target.options.length;m++){
-      target.options[m].selected = (m === targetIdx);
-    }
-    try { target.selectedIndex = targetIdx; } catch(e){}
-
-    // 6) إطلاق كل الأحداث
-    try { target.dispatchEvent(new Event('focus', {bubbles:true})); } catch(e){}
-    try { target.dispatchEvent(new Event('input', {bubbles:true, cancelable:true})); } catch(e){}
-    try { target.dispatchEvent(new Event('change', {bubbles:true, cancelable:true})); } catch(e){}
-    try { target.dispatchEvent(new UIEvent('change', {bubbles:true})); } catch(e){}
-    try { target.dispatchEvent(new Event('blur', {bubbles:true})); } catch(e){}
-    try { target.dispatchEvent(new Event('focusout', {bubbles:true})); } catch(e){}
-    try { target.blur(); } catch(e){}
-
-    return 'ok|value=' + target.value + '|idx=' + target.selectedIndex;
+    return 'ok|val=' + target.value + '|idx=' + target.selectedIndex;
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
 
-  // ⭐⭐⭐ قراءة الحالة الحالية
-  static const readPageState = r'''
+  // ⭐ قراءة الإحصائيات من الصفحة الواحدة (بعد 5000)
+  static const readStats = r'''
 (function(){
   try {
+    // 1) العدد الكلي من "of N entries"
     var total = 0;
     var pg = document.querySelector('.pg-left');
     var pgText = pg ? (pg.innerText||'').trim() : '';
-    var m = pgText.match(/of\s+([\d,]+)/i);
-    if (m) total = parseInt(m[1].replace(/,/g,''), 10);
-
-    var rows = document.querySelectorAll('table tr.vrow').length;
-
-    // آخر صفحة في الـ paginator
-    var currentPage = '?';
-    var curBtn = document.querySelector('.paginator-controls button.pg-num.is-current');
-    if (curBtn) currentPage = (curBtn.innerText||'').trim();
-
-    return JSON.stringify({
-      total: total,
-      rowsOnPage: rows,
-      pgText: pgText,
-      currentPage: currentPage
-    });
-  } catch(e){ return 'err:' + e.message; }
-})()
-''';
-
-  // ⭐⭐⭐ الإحصائيات النهائية — المضاف = الكلي - المتاح
-  static const readFinalStats = r'''
-(function(){
-  try {
-    // 1) العدد الكلي
-    var total = 0;
-    var pg = document.querySelector('.pg-left');
-    if (pg){
-      var m = (pg.innerText||'').match(/of\s+([\d,]+)/i);
+    if (pgText){
+      // يدعم: "of 500 entries" أو "of 5,000 entries"
+      var m = pgText.match(/of\s+([\d,]+)/i);
       if (m) total = parseInt(m[1].replace(/,/g,''), 10);
     }
 
-    // 2) فهرس عمود Client
+    // 2) عدد الصفوف في الصفحة
     var table = document.querySelector('table');
     if (!table){
       return JSON.stringify({
-        total: total, available: 0, added: total, rows: 0, clientIdx: -1
+        total: total, available: 0, added: total,
+        rows: 0, clientIdx: -1, pgText: pgText
       });
     }
+    var rowEls = table.querySelectorAll('tr.vrow');
+    var rows = rowEls.length;
 
+    // 3) فهرس عمود Client (نشيل الـ span والسهم)
     var clientIdx = -1;
     var ths = table.querySelectorAll('th');
     for (var i=0;i<ths.length;i++){
-      var clone = ths[i].cloneNode(true);
-      var ex = clone.querySelectorAll('span, svg');
+      var c = ths[i].cloneNode(true);
+      var ex = c.querySelectorAll('span, svg');
       for (var x=0;x<ex.length;x++) ex[x].remove();
-      var t = (clone.innerText||clone.textContent||'').trim();
+      var t = (c.innerText||c.textContent||'').trim();
       if (t === 'Client'){ clientIdx = i; break; }
     }
 
-    // 3) عد المتاح
-    var rows = table.querySelectorAll('tr.vrow');
+    // 4) عد المتاح (الصفوف اللي فيها "-")
     var available = 0;
     if (clientIdx >= 0){
-      for (var r=0;r<rows.length;r++){
-        var tds = rows[r].querySelectorAll('td');
+      for (var r=0;r<rows;r++){
+        var tds = rowEls[r].querySelectorAll('td');
         if (clientIdx >= tds.length) continue;
-        var c2 = tds[clientIdx].cloneNode(true);
-        var ex2 = c2.querySelectorAll('button, svg');
+        var cell = tds[clientIdx].cloneNode(true);
+        var ex2 = cell.querySelectorAll('button, svg');
         for (var k=0;k<ex2.length;k++) ex2[k].remove();
-        var v = (c2.innerText||c2.textContent||'').trim();
+        var v = (cell.innerText||cell.textContent||'').trim();
         if (v === '-' || v === '' || v === '—' || v === '–') available++;
       }
     }
 
-    // 4) المضاف = الكلي - المتاح
+    // 5) المضاف = الكلي - المتاح
     var added = total - available;
     if (added < 0) added = 0;
 
@@ -280,10 +236,11 @@ class WebScripts {
       total: total,
       available: available,
       added: added,
-      rows: rows.length,
-      clientIdx: clientIdx
+      rows: rows,
+      clientIdx: clientIdx,
+      pgText: pgText
     });
-  } catch(e){ return 'err:' + e.message; }
+  } catch(e){ return 'err: ' + e.message; }
 })()
 ''';
 
