@@ -2,16 +2,17 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'widgets.dart';
 import 'web_scripts.dart';
-import 'models.dart';
 
 class HomePage extends StatefulWidget {
   final Future<String> Function(String js) evalJs;
   final Future<void> Function() onReload;
+  final VoidCallback onToggleWeb;
 
   const HomePage({
     super.key,
     required this.evalJs,
     required this.onReload,
+    required this.onToggleWeb,
   });
 
   @override
@@ -30,15 +31,12 @@ class _HomePageState extends State<HomePage> {
   bool _filtering = false;
   bool _filterApplied = false;
 
-  RangeStats _stats = RangeStats(rangeName: '');
-  bool _loadingStats = false;
-
   int _countToAdd = 10;
   final _userCtrl = TextEditingController();
   bool _adding = false;
   bool _addDone = false;
 
-  static const _countOptions = [10, 25, 50, 100, 200];
+  static const _countOptions = [10, 25, 50, 100];
 
   @override
   void initState() {
@@ -108,7 +106,6 @@ class _HomePageState extends State<HomePage> {
       _ranges.clear();
       _selectedRange = null;
       _filterApplied = false;
-      _stats = RangeStats(rangeName: '');
     });
     await _loadRanges();
   }
@@ -152,97 +149,54 @@ class _HomePageState extends State<HomePage> {
     _log('═══ جاري تطبيق الفلتر ═══');
 
     try {
-      // 1) دوس على الفلتر
       final r = await widget.evalJs(WebScripts.clickFilter);
       _log('Filter: $r');
+      await Future.delayed(const Duration(milliseconds: 2500));
 
-      // 2) استنى 3 ثواني للفلترة
-      await Future.delayed(const Duration(seconds: 3));
-
-      // 3) اقرا الحالة الحالية
-      final info1 = await widget.evalJs(WebScripts.getPageInfo);
-      _log('قبل 5000: $info1');
-
-      // 4) غيّر page size لـ 5000 (بنفس applyVueSelect)
-      final setRes = await widget.evalJs(WebScripts.setPageSize5000);
-      _log('set5000: $setRes');
-
-      // 5) استنى 4 ثواني للتحميل
-      _log('⏳ استنى التحميل…');
-      await Future.delayed(const Duration(seconds: 4));
-
-      // 6) اقرا الحالة بعد 5000
-      final info2 = await widget.evalJs(WebScripts.getPageInfo);
-      _log('بعد 5000: $info2');
-
-      int total = 0;
-      int rows = 0;
-      bool hasNext = false;
-      try {
-        final m = jsonDecode(info2) as Map;
-        total = (m['total'] ?? 0) as int;
-        rows = (m['rows'] ?? 0) as int;
-        hasNext = (m['hasNext'] ?? false) as bool;
-      } catch (_) {}
-
-      // 7) لو لسه فيه Next → يعني الـ 5000 مش كفى
-      //    ندوس Next ونكمل قراءة
-      int availableTotal = 0;
-
-      // اقرا المتاح من الصفحة الحالية
-      final av1 = await widget.evalJs(WebScripts.countAvailableOnPage);
-      int av = int.tryParse(av1) ?? 0;
-      availableTotal += av;
-      _log('الصفحة 1: متاح=$av، صفوف=$rows');
-
-      if (hasNext) {
-        _log('⚠️ لسه فيه صفحات تانية، استخدم Next…');
-        int pages = 1;
-        const maxPages = 50;
-
-        while (hasNext && pages < maxPages) {
-          await widget.evalJs(WebScripts.clickNextPage);
-          await Future.delayed(const Duration(milliseconds: 1500));
-          pages++;
-
-          final avNext = await widget.evalJs(WebScripts.countAvailableOnPage);
-          final avN = int.tryParse(avNext) ?? 0;
-          availableTotal += avN;
-
-          final infoN = await widget.evalJs(WebScripts.getPageInfo);
-          try {
-            final m = jsonDecode(infoN) as Map;
-            hasNext = (m['hasNext'] ?? false) as bool;
-            rows += (m['rows'] ?? 0) as int;
-          } catch (_) {}
-
-          if (pages % 3 == 0) {
-            _log('صفحة $pages: +$avN (المجموع: $availableTotal)');
-          }
-        }
-      }
-
-      // 8) احسب النتيجة
-      final added = total > 0 ? (total - availableTotal).clamp(0, total) : 0;
-
-      setState(() {
-        _stats = RangeStats(
-          rangeName: _selectedRange ?? '',
-          total: total,
-          available: availableTotal,
-          added: added,
-        );
-        _filterApplied = true;
-      });
-
-      _log('═══ النتيجة ═══');
-      _log('كلي=$total | متاح=$availableTotal | مضاف=$added');
+      _log('الفلتر اتطبق ✅');
+      setState(() => _filterApplied = true);
     } catch (e) {
       _log('خطأ: $e');
     }
 
     setState(() => _filtering = false);
-    setState(() => _loadingStats = false);
+  }
+
+  // ═══════ Sort Client column حتى أول صفين يبقوا متاحين ═══════
+  Future<bool> _sortUntilAvailable() async {
+    _log('═══ جاري ترتيب عمود Client ═══');
+
+    for (int attempt = 1; attempt <= 8; attempt++) {
+      final raw = await widget.evalJs(WebScripts.readFirstTwoClients);
+      List<String> firstTwo = [];
+      try {
+        firstTwo = (jsonDecode(raw) as List).cast<String>();
+      } catch (_) {}
+
+      // تحقق: هل أول صفين متاحين؟
+      bool bothAvailable = firstTwo.length >= 2;
+      if (bothAvailable) {
+        for (var v in firstTwo) {
+          if (v != '-' && v != '' && v != '—' && v != '–') {
+            bothAvailable = false;
+            break;
+          }
+        }
+      }
+
+      if (bothAvailable) {
+        _log('✅ الصفوف المتاحة طلعت في الأول (محاولة $attempt)');
+        return true;
+      }
+
+      _log('محاولة $attempt: أول صفين = ${firstTwo.join(" / ")} → أدوس ترتيب');
+      final sr = await widget.evalJs(WebScripts.sortClientColumn);
+      _log('sort: $sr');
+      await Future.delayed(const Duration(milliseconds: 1500));
+    }
+
+    _log('⚠️ مقدرناش نظبط الترتيب، بس هنكمل');
+    return false;
   }
 
   // ═══════ Add numbers ═══════
@@ -256,10 +210,6 @@ class _HomePageState extends State<HomePage> {
       _log('اكتب اسم اليوزر');
       return;
     }
-    if (_stats.available < _countToAdd) {
-      _log('العدد المطلوب أكبر من المتاح (${_stats.available})');
-      return;
-    }
 
     setState(() {
       _adding = true;
@@ -268,11 +218,19 @@ class _HomePageState extends State<HomePage> {
     _log('═══ بدء إضافة $_countToAdd رقم لـ $user ═══');
 
     try {
-      // روح للصفحة الأولى
-      await widget.evalJs(WebScripts.goFirstPage);
-      await Future.delayed(const Duration(milliseconds: 2000));
+      // 1) رتب عمود Client لحد الصفوف المتاحة تطلع
+      await _sortUntilAvailable();
 
-      final checkJs = WebScripts.checkAvailable
+      // 2) غيّر page size للعدد المطلوب
+      _log('جاري ضبط عدد الصفوف = $_countToAdd');
+      final psJs = WebScripts.setPageSize
+          .replaceAll('%SIZE%', _countToAdd.toString());
+      final psRes = await widget.evalJs(psJs);
+      _log('pageSize: $psRes');
+      await Future.delayed(const Duration(milliseconds: 2500));
+
+      // 3) حدد N صف متاح
+      final checkJs = WebScripts.checkAvailableRows
           .replaceAll('%COUNT%', _countToAdd.toString());
       final checkRes = await widget.evalJs(checkJs);
       _log('اختيار: $checkRes');
@@ -283,33 +241,39 @@ class _HomePageState extends State<HomePage> {
       }
       await Future.delayed(const Duration(milliseconds: 800));
 
+      // 4) اضغط زرار Add
       final r1 = await widget.evalJs(WebScripts.clickAddButton);
       _log('زرار Add: $r1');
       if (r1 != 'ok') {
         setState(() => _adding = false);
         return;
       }
-      await Future.delayed(const Duration(milliseconds: 1800));
+      await Future.delayed(const Duration(milliseconds: 1500));
 
+      // 5) DLR = 7/1
       final r2 = await widget.evalJs(WebScripts.selectDlr7_1);
       _log('DLR: $r2');
-      await Future.delayed(const Duration(milliseconds: 600));
+      await Future.delayed(const Duration(milliseconds: 500));
 
+      // 6) افتح قائمة اليوزر
       final r3 = await widget.evalJs(WebScripts.openUserDropdown);
       _log('فتح قائمة اليوزر: $r3');
-      await Future.delayed(const Duration(milliseconds: 900));
+      await Future.delayed(const Duration(milliseconds: 700));
 
+      // 7) اكتب اليوزر
       final searchJs =
           WebScripts.searchUser.replaceAll('%QUERY%', jsonEncode(user));
       await widget.evalJs(searchJs);
-      await Future.delayed(const Duration(milliseconds: 1200));
+      await Future.delayed(const Duration(milliseconds: 900));
 
+      // 8) اختار اليوزر
       final selectJs =
           WebScripts.selectUser.replaceAll('%NAME%', jsonEncode(user));
       final r4 = await widget.evalJs(selectJs);
       _log('اختيار اليوزر: $r4');
-      await Future.delayed(const Duration(milliseconds: 800));
+      await Future.delayed(const Duration(milliseconds: 700));
 
+      // 9) تأكيد
       final r5 = await widget.evalJs(WebScripts.confirmAdd);
       _log('تأكيد الإضافة: $r5');
       await Future.delayed(const Duration(milliseconds: 2500));
@@ -373,6 +337,12 @@ class _HomePageState extends State<HomePage> {
                       ],
                     ),
                   ),
+                  // ⭐ زرار "أشوف"
+                  IconBtn(
+                    icon: Icons.visibility_rounded,
+                    onTap: widget.onToggleWeb,
+                  ),
+                  const SizedBox(width: 6),
                   IconBtn(
                     icon: Icons.refresh_rounded,
                     spinning: _loadingRanges || _filtering,
@@ -394,8 +364,6 @@ class _HomePageState extends State<HomePage> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _buildRangeCard(theme),
-                      const SizedBox(height: 12),
-                      _buildStatsRow(theme),
                       const SizedBox(height: 12),
                       _buildAddCard(theme),
                       const SizedBox(height: 12),
@@ -528,43 +496,6 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildStatsRow(ThemeData theme) {
-    final show = _filterApplied;
-    return Row(
-      children: [
-        Expanded(
-          child: StatCard(
-            label: 'الكلي',
-            value: show ? _stats.total : 0,
-            icon: Icons.list_alt_rounded,
-            colors: const [Color(0xFF6C5CE7), Color(0xFF8E7CFF)],
-            loading: _loadingStats,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: StatCard(
-            label: 'متاحة',
-            value: show ? _stats.available : 0,
-            icon: Icons.check_circle_rounded,
-            colors: const [Color(0xFF00B894), Color(0xFF00D68F)],
-            loading: _loadingStats,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: StatCard(
-            label: 'مضافة',
-            value: show ? _stats.added : 0,
-            icon: Icons.person_add_rounded,
-            colors: const [Color(0xFFFF6B6B), Color(0xFFFF8E53)],
-            loading: _loadingStats,
-          ),
-        ),
-      ],
     );
   }
 
