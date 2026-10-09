@@ -57,7 +57,7 @@ class _HomePageState extends State<HomePage> {
   void _log(String msg) {
     final cur = _logs.value;
     final upd = <String>['${_timeNow()}  $msg', ...cur];
-    if (upd.length > 150) upd.removeRange(150, upd.length);
+    if (upd.length > 200) upd.removeRange(200, upd.length);
     _logs.value = upd;
   }
 
@@ -143,7 +143,7 @@ class _HomePageState extends State<HomePage> {
     await Future.delayed(const Duration(milliseconds: 600));
   }
 
-  // ═══════ Apply Filter + read stats ═══════
+  // ═══════ Apply Filter ═══════
   Future<void> _applyFilter() async {
     if (_selectedRange == null) {
       _log('اختار رنج الأول');
@@ -160,7 +160,7 @@ class _HomePageState extends State<HomePage> {
       _log('Filter: $r');
       await Future.delayed(const Duration(milliseconds: 3000));
 
-      _log('الفلتر اتطبق ✅ جاري قراءة الإحصائيات…');
+      _log('الفلتر اتطبق ✅ جاري تحضير الإحصائيات…');
       setState(() => _filterApplied = true);
       await _readStats();
     } catch (e) {
@@ -170,28 +170,34 @@ class _HomePageState extends State<HomePage> {
     setState(() => _filtering = false);
   }
 
-  // ═══════ Read stats (مع إعادة محاولة) ═══════
+  // ═══════ Read Stats ═══════
   Future<void> _readStats() async {
     setState(() => _loadingStats = true);
 
-    // 1) غيّر page size لـ 5000
-    final sRes = await widget.evalJs(WebScripts.setPageSize5000);
-    _log('page size: $sRes');
-    await Future.delayed(const Duration(milliseconds: 2500));
+    // 1) اعرف الـ options الحقيقية
+    final info = await widget.evalJs(WebScripts.readPageSizeInfo);
+    _log('pageSize info: $info');
 
-    // 2) جرّب قراءة الإحصائيات 5 مرات
-    for (int i = 0; i < 5; i++) {
+    // 2) كبّر page size لأقصى قيمة
+    final setRes = await widget.evalJs(WebScripts.setMaxPageSize);
+    _log('setMaxPageSize: $setRes');
+
+    // 3) استنى الـ reload
+    await Future.delayed(const Duration(milliseconds: 3500));
+
+    // 4) جرّب قراءة الإحصائيات 6 مرات
+    for (int i = 0; i < 6; i++) {
       final raw = await widget.evalJs(WebScripts.readStats);
-      _log('stats[$i]: ${raw.length > 200 ? raw.substring(0,200) : raw}');
+
+      // لو الرد طويل، اطبع جزء منه
+      final short = raw.length > 300 ? raw.substring(0, 300) : raw;
+      _log('stats[$i]: $short');
 
       try {
         final m = jsonDecode(raw) as Map;
         final clientIdx = (m['clientIdx'] ?? -1) as int;
         final rows = (m['rowsOnPage'] ?? 0) as int;
 
-        // اعتبر القراءة ناجحة لو:
-        //   - لقينا عمود Client
-        //   - وفيه صفوف
         if (clientIdx >= 0 && rows > 0) {
           final s = RangeStats(
             rangeName: _selectedRange ?? '',
@@ -200,9 +206,7 @@ class _HomePageState extends State<HomePage> {
             added: (m['added'] ?? 0) as int,
           );
           setState(() => _stats = s);
-          _log(
-            '✅ إحصائيات: كلي=${s.total} | متاح=${s.available} | مضاف=${s.added}',
-          );
+          _log('✅ إحصائيات: كلي=${s.total} | متاح=${s.available} | مضاف=${s.added}');
           setState(() => _loadingStats = false);
           return;
         }
@@ -210,7 +214,7 @@ class _HomePageState extends State<HomePage> {
         _log('parse err: $e');
       }
 
-      await Future.delayed(const Duration(milliseconds: 1200));
+      await Future.delayed(const Duration(milliseconds: 1500));
     }
 
     _log('⚠️ مقدرناش نقرأ الإحصائيات');
@@ -370,7 +374,7 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(height: 12),
                       _buildAddCard(theme),
                       const SizedBox(height: 12),
-                      LogPanel(logs: _logs, height: 160),
+                      LogPanel(logs: _logs, height: 200),
                       const SizedBox(height: 10),
                     ],
                   ),
