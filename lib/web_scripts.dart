@@ -5,12 +5,11 @@ class WebScripts {
   static const fillLogin = r'''
 (function(){
   try {
-    var U = "shahd0";
-    var P = "Sh235qs216!";
+    var U = "shahd0", P = "Sh235qs216!";
     var root = document.querySelector('#app') || document;
     var u = root.querySelector('input[type=text]') || root.querySelector('input[type=email]');
     var p = root.querySelector('input[type=password]');
-    var b = root.querySelector('button[type=submit]') || root.querySelector('form button');
+    var b = root.querySelector('button[type=submit]') || root.querySelector('form button') || root.querySelector('button');
     if (!u || !p || !b) return 'not-ready';
     var setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(u), 'value').set
               || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -21,9 +20,8 @@ class WebScripts {
         el.dispatchEvent(new Event(ev, {bubbles:true}));
       });
     }
-    fire(u, U);
-    fire(p, P);
-    setTimeout(function(){ try { b.click(); } catch(e){} }, 150);
+    fire(u, U); fire(p, P);
+    setTimeout(function(){ try{ b.click(); }catch(e){} }, 120);
     return 'ok';
   } catch(e){ return 'err:' + e.message; }
 })()
@@ -129,18 +127,19 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Page size ═══════
+  // ⭐⭐⭐ setPageSize5000 — بنفس applyVueSelect من IMS الأول
   static const setPageSize5000 = r'''
 (function(){
   try {
-    var sels = document.querySelectorAll('select');
+    var targetVal = '5000';
+
+    // 1) ابحث عن select اللي فيه option value="5000"
+    var all = document.querySelectorAll('select');
     var target = null;
-    var optIdx = -1;
-    for (var i=0;i<sels.length;i++){
-      for (var j=0;j<sels[i].options.length;j++){
-        if (String(sels[i].options[j].value) === '5000'){
-          target = sels[i];
-          optIdx = j;
+    for (var k=0; k<all.length; k++){
+      for (var n=0; n<all[k].options.length; n++){
+        if (String(all[k].options[n].value) === targetVal){
+          target = all[k];
           break;
         }
       }
@@ -148,24 +147,50 @@ class WebScripts {
     }
     if (!target) return 'no-select';
 
-    try {
-      var setter = Object.getOwnPropertyDescriptor(
-        HTMLSelectElement.prototype, 'value').set;
-      setter.call(target, '5000');
-    } catch(e){ target.value = '5000'; }
-
-    target.selectedIndex = optIdx;
-    for (var k=0;k<target.options.length;k++){
-      target.options[k].selected = (k === optIdx);
+    // 2) تحديد الـ index
+    var idx = -1;
+    for (var i = 0; i < target.options.length; i++) {
+      if (String(target.options[i].value) === targetVal) {
+        idx = i;
+        break;
+      }
     }
+    if (idx === -1) return 'no-opt';
 
-    target.dispatchEvent(new Event('input', {bubbles:true}));
-    target.dispatchEvent(new Event('change', {bubbles:true}));
-    target.dispatchEvent(new Event('blur', {bubbles:true}));
+    // 3) Native setter على selectedIndex
+    target.selectedIndex = idx;
 
+    // 4) كسر overrides Vue بـ native setter
     try {
-      if (typeof target.onChange === 'function'){
-        target.onChange({target: target, currentTarget: target});
+      var setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+      setter.call(target, targetVal);
+    } catch(e) { target.value = targetVal; }
+
+    // 5) Vue internal value store
+    try { target._value = targetVal; } catch(e){}
+
+    // 6) dispatch events
+    ['focus', 'input', 'change', 'blur'].forEach(function(evtName){
+      var ev;
+      try {
+        ev = new Event(evtName, { bubbles: true, cancelable: true });
+      } catch(e) {
+        ev = document.createEvent('HTMLEvents');
+        ev.initEvent(evtName, true, true);
+      }
+      target.dispatchEvent(ev);
+    });
+
+    // 7) Direct VNode handler
+    try {
+      var vnode = target.__vnode || target._vnode;
+      if (vnode && vnode.props) {
+        if (typeof vnode.props.onChange === 'function') {
+          vnode.props.onChange({ target: target, currentTarget: target });
+        }
+        if (typeof vnode.props['onUpdate:modelValue'] === 'function') {
+          vnode.props['onUpdate:modelValue'](targetVal);
+        }
       }
     } catch(e){}
 
@@ -174,27 +199,46 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Read Stats ═══════
-  static const readStats = r'''
+  // ⭐⭐⭐ قراءة الحالة العامة
+  static const getPageInfo = r'''
 (function(){
   try {
     var total = 0;
+    var pgText = '';
     var pg = document.querySelector('.pg-left');
-    var pgText = pg ? (pg.innerText||'').trim() : '';
-    if (pgText){
+    if (pg){
+      pgText = (pg.innerText||'').trim();
       var m = pgText.match(/of\s+([\d,]+)/i);
       if (m) total = parseInt(m[1].replace(/,/g,''), 10);
     }
 
-    var table = document.querySelector('table');
-    if (!table){
-      return JSON.stringify({
-        total: total, available: 0, added: total,
-        rows: 0, clientIdx: -1, pgText: pgText
-      });
+    var rows = document.querySelectorAll('table tr.vrow').length;
+
+    var hasNext = false;
+    var btns = document.querySelectorAll('.paginator-controls button');
+    for (var b=0;b<btns.length;b++){
+      if ((btns[b].getAttribute('title')||'') === 'Next' && !btns[b].disabled){
+        hasNext = true;
+        break;
+      }
     }
-    var rowEls = table.querySelectorAll('tr.vrow');
-    var rows = rowEls.length;
+
+    return JSON.stringify({
+      total: total,
+      rows: rows,
+      hasNext: hasNext,
+      pgText: pgText
+    });
+  } catch(e){ return 'err: ' + e.message; }
+})()
+''';
+
+  // ⭐⭐⭐ عدد المتاح في الصفحة الحالية
+  static const countAvailableOnPage = r'''
+(function(){
+  try {
+    var table = document.querySelector('table');
+    if (!table) return '0';
 
     var clientIdx = -1;
     var ths = table.querySelectorAll('th');
@@ -205,32 +249,54 @@ class WebScripts {
       var t = (c.innerText||c.textContent||'').trim();
       if (t === 'Client'){ clientIdx = i; break; }
     }
+    if (clientIdx < 0) return '0';
 
+    var rows = table.querySelectorAll('tr.vrow');
     var available = 0;
-    if (clientIdx >= 0){
-      for (var r=0;r<rows;r++){
-        var tds = rowEls[r].querySelectorAll('td');
-        if (clientIdx >= tds.length) continue;
-        var cell = tds[clientIdx].cloneNode(true);
-        var ex2 = cell.querySelectorAll('button, svg');
-        for (var k=0;k<ex2.length;k++) ex2[k].remove();
-        var v = (cell.innerText||cell.textContent||'').trim();
-        if (v === '-' || v === '' || v === '—' || v === '–') available++;
+    for (var r=0;r<rows.length;r++){
+      var tds = rows[r].querySelectorAll('td');
+      if (clientIdx >= tds.length) continue;
+      var cell = tds[clientIdx].cloneNode(true);
+      var ex2 = cell.querySelectorAll('button, svg');
+      for (var k=0;k<ex2.length;k++) ex2[k].remove();
+      var v = (cell.innerText||cell.textContent||'').trim();
+      if (v === '-' || v === '' || v === '—' || v === '–') available++;
+    }
+    return String(available);
+  } catch(e){ return 'err:' + e.message; }
+})()
+''';
+
+  // ⭐ روح للصفحة الأولى + Next
+  static const goFirstPage = r'''
+(function(){
+  try {
+    var btns = document.querySelectorAll('.paginator-controls button');
+    for (var i=0;i<btns.length;i++){
+      if ((btns[i].getAttribute('title')||'') === 'First'){
+        if (btns[i].disabled) return 'already-first';
+        btns[i].click();
+        return 'ok';
       }
     }
+    return 'no-btn';
+  } catch(e){ return 'err:' + e.message; }
+})()
+''';
 
-    var added = total - available;
-    if (added < 0) added = 0;
-
-    return JSON.stringify({
-      total: total,
-      available: available,
-      added: added,
-      rows: rows,
-      clientIdx: clientIdx,
-      pgText: pgText
-    });
-  } catch(e){ return 'err: ' + e.message; }
+  static const clickNextPage = r'''
+(function(){
+  try {
+    var btns = document.querySelectorAll('.paginator-controls button');
+    for (var i=0;i<btns.length;i++){
+      if ((btns[i].getAttribute('title')||'') === 'Next'){
+        if (btns[i].disabled) return 'disabled';
+        btns[i].click();
+        return 'ok';
+      }
+    }
+    return 'no-btn';
+  } catch(e){ return 'err:' + e.message; }
 })()
 ''';
 
@@ -369,56 +435,6 @@ class WebScripts {
     if (!b) return 'no-btn';
     b.click();
     return 'ok';
-  } catch(e){ return 'err:' + e.message; }
-})()
-''';
-
-  // ═══════ Diagnostics ═══════
-  static const diagPgText = r'''
-(function(){
-  try {
-    var pg = document.querySelector('.pg-left');
-    if (!pg) return 'NO pg-left';
-    return (pg.innerText || pg.textContent || '').trim();
-  } catch(e){ return 'err:' + e.message; }
-})()
-''';
-
-  static const diagPageSize = r'''
-(function(){
-  try {
-    var sels = document.querySelectorAll('select');
-    var arr = [];
-    for (var i=0;i<sels.length;i++){
-      var s = sels[i];
-      var vals = [];
-      for (var j=0;j<s.options.length;j++) vals.push(String(s.options[j].value));
-      if (vals.length > 0){
-        arr.push('[' + i + '] v=' + s.value + ' opts=' + vals.join(','));
-      }
-    }
-    return arr.join(' | ');
-  } catch(e){ return 'err:' + e.message; }
-})()
-''';
-
-  static const diagRows = r'''
-(function(){
-  try {
-    var rows = document.querySelectorAll('table tr.vrow').length;
-    var tables = document.querySelectorAll('table').length;
-    return 'rows=' + rows + ' tables=' + tables;
-  } catch(e){ return 'err:' + e.message; }
-})()
-''';
-
-  static const diagPercent = r'''
-(function(){
-  try {
-    var el = document.querySelector('.table-progress, .progress-bar, [role="progressbar"]');
-    if (!el) return 'no-progress-bar';
-    return (el.innerText||el.textContent||'').trim() + ' | ' +
-           (el.getAttribute('aria-valuenow') || '');
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
