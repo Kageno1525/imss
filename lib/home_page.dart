@@ -22,22 +22,18 @@ class _HomePageState extends State<HomePage> {
   final ValueNotifier<List<String>> _logs =
       ValueNotifier<List<String>>(<String>[]);
 
-  // ranges
   List<String> _ranges = [];
   String? _selectedRange;
   String _rangeSearch = '';
   bool _loadingRanges = false;
   bool _rangesOpen = false;
 
-  // filter
   bool _filtering = false;
   bool _filterApplied = false;
 
-  // stats
   RangeStats _stats = RangeStats(rangeName: '');
   bool _loadingStats = false;
 
-  // add form
   int _countToAdd = 10;
   final _userCtrl = TextEditingController();
   bool _adding = false;
@@ -61,22 +57,19 @@ class _HomePageState extends State<HomePage> {
   void _log(String msg) {
     final cur = _logs.value;
     final upd = <String>['${_timeNow()}  $msg', ...cur];
-    if (upd.length > 120) upd.removeRange(120, upd.length);
+    if (upd.length > 150) upd.removeRange(150, upd.length);
     _logs.value = upd;
   }
 
   String _timeNow() {
     final t = DateTime.now();
-    final hh = t.hour.toString().padLeft(2, '0');
-    final mm = t.minute.toString().padLeft(2, '0');
-    final ss = t.second.toString().padLeft(2, '0');
-    return '$hh:$mm:$ss';
+    return '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}:'
+        '${t.second.toString().padLeft(2, '0')}';
   }
 
-  // ═══════ Bootstrap: load ranges ═══════
   Future<void> _bootstrap() async {
-    // استنى الصفحة تخلص load
-    await Future.delayed(const Duration(seconds: 2));
+    await Future.delayed(const Duration(seconds: 3));
     _log('جاري قراءة الرنجات…');
     await _loadRanges();
   }
@@ -121,7 +114,6 @@ class _HomePageState extends State<HomePage> {
     await _loadRanges();
   }
 
-  // ═══════ Search ranges (live) ═══════
   Future<void> _searchRanges(String q) async {
     setState(() => _rangeSearch = q);
     if (!_rangesOpen) {
@@ -139,7 +131,6 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {}
   }
 
-  // ═══════ Select range ═══════
   Future<void> _pickRange(String name) async {
     setState(() => _selectedRange = name);
     _log('اختيار الرنج: $name');
@@ -150,8 +141,6 @@ class _HomePageState extends State<HomePage> {
       await Future.delayed(const Duration(milliseconds: 500));
     }
     await Future.delayed(const Duration(milliseconds: 600));
-    final cur = await widget.evalJs(WebScripts.readSelectedRange);
-    _log('الرنج الحالي: $cur');
   }
 
   // ═══════ Apply Filter + read stats ═══════
@@ -160,20 +149,19 @@ class _HomePageState extends State<HomePage> {
       _log('اختار رنج الأول');
       return;
     }
-    setState(() => _filtering = true);
-    _log('جاري تطبيق الفلتر…');
+    setState(() {
+      _filtering = true;
+      _filterApplied = false;
+    });
+    _log('═══ جاري تطبيق الفلتر ═══');
 
     try {
-      // اقفل القائمة المنسدلة لو مفتوحة
-      await widget.evalJs('document.body.click();');
-      await Future.delayed(const Duration(milliseconds: 300));
-
       final r = await widget.evalJs(WebScripts.clickFilter);
       _log('Filter: $r');
-      await Future.delayed(const Duration(milliseconds: 2500));
+      await Future.delayed(const Duration(milliseconds: 3000));
 
+      _log('الفلتر اتطبق ✅ جاري قراءة الإحصائيات…');
       setState(() => _filterApplied = true);
-      _log('الفلتر اتطبق ✅');
       await _readStats();
     } catch (e) {
       _log('خطأ: $e');
@@ -182,30 +170,50 @@ class _HomePageState extends State<HomePage> {
     setState(() => _filtering = false);
   }
 
-  // ═══════ Read stats ═══════
+  // ═══════ Read stats (مع إعادة محاولة) ═══════
   Future<void> _readStats() async {
     setState(() => _loadingStats = true);
 
-    // كبّر عدد الصفوف لـ 5000
-    await widget.evalJs(WebScripts.setPageSize5000);
-    await Future.delayed(const Duration(milliseconds: 1500));
+    // 1) غيّر page size لـ 5000
+    final sRes = await widget.evalJs(WebScripts.setPageSize5000);
+    _log('page size: $sRes');
+    await Future.delayed(const Duration(milliseconds: 2500));
 
-    final raw = await widget.evalJs(WebScripts.readStats);
-    try {
-      final m = jsonDecode(raw) as Map;
-      final s = RangeStats(
-        rangeName: _selectedRange ?? '',
-        total: (m['total'] ?? 0) as int,
-        available: (m['available'] ?? 0) as int,
-        added: (m['added'] ?? 0) as int,
-      );
-      setState(() => _stats = s);
-      _log(
-          'إحصائيات: كلي=${s.total} | متاح=${s.available} | مضاف=${s.added}');
-    } catch (e) {
-      _log('فشل قراءة الإحصائيات: $e');
+    // 2) جرّب قراءة الإحصائيات 5 مرات
+    for (int i = 0; i < 5; i++) {
+      final raw = await widget.evalJs(WebScripts.readStats);
+      _log('stats[$i]: ${raw.length > 200 ? raw.substring(0,200) : raw}');
+
+      try {
+        final m = jsonDecode(raw) as Map;
+        final clientIdx = (m['clientIdx'] ?? -1) as int;
+        final rows = (m['rowsOnPage'] ?? 0) as int;
+
+        // اعتبر القراءة ناجحة لو:
+        //   - لقينا عمود Client
+        //   - وفيه صفوف
+        if (clientIdx >= 0 && rows > 0) {
+          final s = RangeStats(
+            rangeName: _selectedRange ?? '',
+            total: (m['total'] ?? 0) as int,
+            available: (m['available'] ?? 0) as int,
+            added: (m['added'] ?? 0) as int,
+          );
+          setState(() => _stats = s);
+          _log(
+            '✅ إحصائيات: كلي=${s.total} | متاح=${s.available} | مضاف=${s.added}',
+          );
+          setState(() => _loadingStats = false);
+          return;
+        }
+      } catch (e) {
+        _log('parse err: $e');
+      }
+
+      await Future.delayed(const Duration(milliseconds: 1200));
     }
 
+    _log('⚠️ مقدرناش نقرأ الإحصائيات');
     setState(() => _loadingStats = false);
   }
 
@@ -232,7 +240,6 @@ class _HomePageState extends State<HomePage> {
     _log('═══ بدء إضافة $_countToAdd رقم لـ $user ═══');
 
     try {
-      // 1) اختر N checkbox من الصفوف المتاحة
       final checkJs = WebScripts.checkAvailable
           .replaceAll('%COUNT%', _countToAdd.toString());
       final checkRes = await widget.evalJs(checkJs);
@@ -242,9 +249,8 @@ class _HomePageState extends State<HomePage> {
         setState(() => _adding = false);
         return;
       }
-      await Future.delayed(const Duration(milliseconds: 400));
+      await Future.delayed(const Duration(milliseconds: 500));
 
-      // 2) اضغط زرار Add
       final r1 = await widget.evalJs(WebScripts.clickAddButton);
       _log('زرار Add: $r1');
       if (r1 != 'ok') {
@@ -253,38 +259,32 @@ class _HomePageState extends State<HomePage> {
       }
       await Future.delayed(const Duration(milliseconds: 1500));
 
-      // 3) اختار DLR = 7/1
       final r2 = await widget.evalJs(WebScripts.selectDlr7_1);
       _log('DLR: $r2');
       await Future.delayed(const Duration(milliseconds: 500));
 
-      // 4) افتح قائمة اليوزر
       final r3 = await widget.evalJs(WebScripts.openUserDropdown);
       _log('فتح قائمة اليوزر: $r3');
       await Future.delayed(const Duration(milliseconds: 700));
 
-      // 5) اكتب اليوزر في البحث
       final searchJs =
           WebScripts.searchUser.replaceAll('%QUERY%', jsonEncode(user));
       await widget.evalJs(searchJs);
       await Future.delayed(const Duration(milliseconds: 900));
 
-      // 6) اختار اليوزر
       final selectJs =
           WebScripts.selectUser.replaceAll('%NAME%', jsonEncode(user));
       final r4 = await widget.evalJs(selectJs);
       _log('اختيار اليوزر: $r4');
       await Future.delayed(const Duration(milliseconds: 700));
 
-      // 7) اضغط تأكيد
       final r5 = await widget.evalJs(WebScripts.confirmAdd);
       _log('تأكيد الإضافة: $r5');
-      await Future.delayed(const Duration(milliseconds: 2000));
+      await Future.delayed(const Duration(milliseconds: 2500));
 
       setState(() => _addDone = true);
       _log('✅ تم إضافة $_countToAdd رقم لـ $user');
 
-      // 8) حدّث الإحصائيات تلقائيًا
       _log('جاري تحديث الإحصائيات…');
       await _readStats();
     } catch (e) {
@@ -306,7 +306,6 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Header
               Row(
                 children: [
                   Container(
@@ -360,8 +359,6 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
               const SizedBox(height: 12),
-
-              // Scrollable body
               Expanded(
                 child: SingleChildScrollView(
                   child: Column(
@@ -373,7 +370,7 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(height: 12),
                       _buildAddCard(theme),
                       const SizedBox(height: 12),
-                      LogPanel(logs: _logs, height: 130),
+                      LogPanel(logs: _logs, height: 160),
                       const SizedBox(height: 10),
                     ],
                   ),
@@ -386,7 +383,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ═══════ Range Card ═══════
   Widget _buildRangeCard(ThemeData theme) {
     return _card(
       theme,
@@ -395,8 +391,6 @@ class _HomePageState extends State<HomePage> {
         children: [
           _label(theme, Icons.sim_card_rounded, 'الرنج'),
           const SizedBox(height: 10),
-
-          // Search input
           TextField(
             onChanged: _searchRanges,
             decoration: InputDecoration(
@@ -405,16 +399,12 @@ class _HomePageState extends State<HomePage> {
               suffixIcon: _rangeSearch.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.close_rounded, size: 18),
-                      onPressed: () {
-                        _searchRanges('');
-                      },
+                      onPressed: () => _searchRanges(''),
                     )
                   : null,
             ),
           ),
           const SizedBox(height: 10),
-
-          // Ranges list
           Container(
             constraints: const BoxConstraints(maxHeight: 180),
             decoration: BoxDecoration(
@@ -464,14 +454,17 @@ class _HomePageState extends State<HomePage> {
                                 vertical: 10,
                               ),
                               color: sel
-                                  ? theme.colorScheme.primary.withOpacity(0.15)
+                                  ? theme.colorScheme.primary
+                                      .withOpacity(0.15)
                                   : Colors.transparent,
                               child: Row(
                                 children: [
                                   Icon(
                                     sel
-                                        ? Icons.radio_button_checked_rounded
-                                        : Icons.radio_button_unchecked_rounded,
+                                        ? Icons
+                                            .radio_button_checked_rounded
+                                        : Icons
+                                            .radio_button_unchecked_rounded,
                                     size: 18,
                                     color: sel
                                         ? theme.colorScheme.primary
@@ -498,8 +491,6 @@ class _HomePageState extends State<HomePage> {
                       ),
           ),
           const SizedBox(height: 12),
-
-          // Filter button
           ActionBtn(
             label: 'تطبيق الفلتر',
             icon: Icons.filter_alt_rounded,
@@ -512,7 +503,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ═══════ Stats Row ═══════
   Widget _buildStatsRow(ThemeData theme) {
     final show = _filterApplied;
     return Row(
@@ -550,7 +540,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ═══════ Add Card ═══════
   Widget _buildAddCard(ThemeData theme) {
     return _card(
       theme,
@@ -559,8 +548,6 @@ class _HomePageState extends State<HomePage> {
         children: [
           _label(theme, Icons.add_circle_outline_rounded, 'إضافة أرقام'),
           const SizedBox(height: 12),
-
-          // Count picker
           Row(
             children: [
               Expanded(
@@ -611,8 +598,6 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
           const SizedBox(height: 12),
-
-          // User input
           TextField(
             controller: _userCtrl,
             decoration: const InputDecoration(
@@ -622,8 +607,6 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           const SizedBox(height: 12),
-
-          // Add button
           ActionBtn(
             label: _adding ? 'جاري الإضافة…' : 'إضافة الأرقام',
             icon: _addDone
@@ -640,7 +623,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ═══════ Helpers ═══════
   Widget _card(ThemeData theme, {required Widget child}) {
     return Container(
       padding: const EdgeInsets.all(16),
