@@ -129,115 +129,137 @@ class WebScripts {
 })()
 ''';
 
-  // ⭐ setMaxPageSize — أقصى قيمة في أي select
-  static const setMaxPageSize = r'''
+  // ⭐⭐⭐ تغيير page size لـ 5000 — نفس طريقة IMS الأول
+  static const setPageSize5000 = r'''
 (function(){
   try {
-    var sels = document.querySelectorAll('select.select, select');
-    for (var i=0;i<sels.length;i++){
-      var s = sels[i];
+    // 1) ابحث عن select اللي فيه option value="5000"
+    var allSelects = document.querySelectorAll('select');
+    var target = null;
+    var targetIdx = -1;
+    var info = [];
+
+    for (var i=0;i<allSelects.length;i++){
+      var s = allSelects[i];
       var vals = [];
-      for (var j=0;j<s.options.length;j++) vals.push(String(s.options[j].value));
-      if (vals.indexOf('5000') < 0 && vals.indexOf('1000') < 0 &&
-          vals.indexOf('500') < 0) continue;
-      
-      var maxIdx = -1, maxNum = -1;
-      for (var k=0;k<s.options.length;k++){
-        var v = String(s.options[k].value);
-        var n = parseInt(v.replace(/,/g,''), 10);
-        if (!isNaN(n) && n > maxNum){ maxNum = n; maxIdx = k; }
+      var found5000 = -1;
+      for (var j=0;j<s.options.length;j++){
+        vals.push(String(s.options[j].value));
+        if (String(s.options[j].value) === '5000') found5000 = j;
       }
-      if (maxIdx < 0) continue;
-      var maxVal = String(s.options[maxIdx].value);
-      try {
-        var setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
-        setter.call(s, maxVal);
-      } catch(e){ s.value = maxVal; }
-      s.selectedIndex = maxIdx;
-      for (var m=0;m<s.options.length;m++) s.options[m].selected = (m === maxIdx);
-      s.dispatchEvent(new Event('input', {bubbles:true}));
-      s.dispatchEvent(new Event('change', {bubbles:true}));
-      return 'ok|set=' + maxVal;
+      info.push('sel' + i + '=[' + vals.join(',') + ']');
+      if (found5000 >= 0){
+        target = s;
+        targetIdx = found5000;
+        break;
+      }
     }
-    return 'no-select';
+
+    if (!target) return 'no-select|' + info.join('|');
+
+    // 2) focus
+    try { target.focus(); } catch(e){}
+
+    // 3) native setter على selectedIndex
+    try {
+      var idxSetter = Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype, 'selectedIndex'
+      ).set;
+      idxSetter.call(target, targetIdx);
+    } catch(e){
+      target.selectedIndex = targetIdx;
+    }
+
+    // 4) native setter على value
+    try {
+      var vSetter = Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype, 'value'
+      ).set;
+      vSetter.call(target, '5000');
+    } catch(e){
+      target.value = '5000';
+    }
+
+    // 5) تأكيد يدوي
+    for (var m=0;m<target.options.length;m++){
+      target.options[m].selected = (m === targetIdx);
+    }
+    try { target.selectedIndex = targetIdx; } catch(e){}
+
+    // 6) إطلاق كل الأحداث
+    try { target.dispatchEvent(new Event('focus', {bubbles:true})); } catch(e){}
+    try { target.dispatchEvent(new Event('input', {bubbles:true, cancelable:true})); } catch(e){}
+    try { target.dispatchEvent(new Event('change', {bubbles:true, cancelable:true})); } catch(e){}
+    try { target.dispatchEvent(new UIEvent('change', {bubbles:true})); } catch(e){}
+    try { target.dispatchEvent(new Event('blur', {bubbles:true})); } catch(e){}
+    try { target.dispatchEvent(new Event('focusout', {bubbles:true})); } catch(e){}
+    try { target.blur(); } catch(e){}
+
+    return 'ok|value=' + target.value + '|idx=' + target.selectedIndex;
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
 
-  // ⭐⭐⭐ Pagination helpers
-  static const getPaginationInfo = r'''
+  // ⭐⭐⭐ قراءة الحالة الحالية
+  static const readPageState = r'''
 (function(){
   try {
-    var pg = document.querySelector('.pg-left');
-    var text = pg ? (pg.innerText||'').trim() : '';
     var total = 0;
-    var m = text.match(/of\s+([\d,]+)/i);
+    var pg = document.querySelector('.pg-left');
+    var pgText = pg ? (pg.innerText||'').trim() : '';
+    var m = pgText.match(/of\s+([\d,]+)/i);
     if (m) total = parseInt(m[1].replace(/,/g,''), 10);
 
     var rows = document.querySelectorAll('table tr.vrow').length;
 
-    var hasNext = false;
-    document.querySelectorAll('.paginator-controls button').forEach(function(b){
-      if ((b.getAttribute('title')||'') === 'Next' && !b.disabled) hasNext = true;
-    });
+    // آخر صفحة في الـ paginator
+    var currentPage = '?';
+    var curBtn = document.querySelector('.paginator-controls button.pg-num.is-current');
+    if (curBtn) currentPage = (curBtn.innerText||'').trim();
 
     return JSON.stringify({
       total: total,
-      rowsPerPage: rows,
-      hasNext: hasNext,
-      pgText: text
+      rowsOnPage: rows,
+      pgText: pgText,
+      currentPage: currentPage
     });
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
 
-  static const clickFirstPage = r'''
-(function(){
-  var btns = document.querySelectorAll('.paginator-controls button');
-  for (var i=0;i<btns.length;i++){
-    if ((btns[i].getAttribute('title')||'') === 'First'){
-      if (btns[i].disabled) return 'disabled';
-      btns[i].click();
-      return 'ok';
-    }
-  }
-  return 'no-btn';
-})()
-''';
-
-  static const clickNextPage = r'''
-(function(){
-  var btns = document.querySelectorAll('.paginator-controls button');
-  for (var i=0;i<btns.length;i++){
-    if ((btns[i].getAttribute('title')||'') === 'Next'){
-      if (btns[i].disabled) return 'disabled';
-      btns[i].click();
-      return 'ok';
-    }
-  }
-  return 'no-btn';
-})()
-''';
-
-  /// قراءة إحصائيات الصفحة الحالية فقط
-  static const readCurrentPageStats = r'''
+  // ⭐⭐⭐ الإحصائيات النهائية — المضاف = الكلي - المتاح
+  static const readFinalStats = r'''
 (function(){
   try {
+    // 1) العدد الكلي
+    var total = 0;
+    var pg = document.querySelector('.pg-left');
+    if (pg){
+      var m = (pg.innerText||'').match(/of\s+([\d,]+)/i);
+      if (m) total = parseInt(m[1].replace(/,/g,''), 10);
+    }
+
+    // 2) فهرس عمود Client
     var table = document.querySelector('table');
-    if (!table) return JSON.stringify({available:0, added:0, rows:0});
+    if (!table){
+      return JSON.stringify({
+        total: total, available: 0, added: total, rows: 0, clientIdx: -1
+      });
+    }
 
     var clientIdx = -1;
     var ths = table.querySelectorAll('th');
     for (var i=0;i<ths.length;i++){
-      var c = ths[i].cloneNode(true);
-      var ex = c.querySelectorAll('span, svg');
+      var clone = ths[i].cloneNode(true);
+      var ex = clone.querySelectorAll('span, svg');
       for (var x=0;x<ex.length;x++) ex[x].remove();
-      var t = (c.innerText||'').trim();
+      var t = (clone.innerText||clone.textContent||'').trim();
       if (t === 'Client'){ clientIdx = i; break; }
     }
 
+    // 3) عد المتاح
     var rows = table.querySelectorAll('tr.vrow');
-    var available = 0, added = 0;
+    var available = 0;
     if (clientIdx >= 0){
       for (var r=0;r<rows.length;r++){
         var tds = rows[r].querySelectorAll('td');
@@ -245,13 +267,17 @@ class WebScripts {
         var c2 = tds[clientIdx].cloneNode(true);
         var ex2 = c2.querySelectorAll('button, svg');
         for (var k=0;k<ex2.length;k++) ex2[k].remove();
-        var v = (c2.innerText||'').trim();
+        var v = (c2.innerText||c2.textContent||'').trim();
         if (v === '-' || v === '' || v === '—' || v === '–') available++;
-        else added++;
       }
     }
 
+    // 4) المضاف = الكلي - المتاح
+    var added = total - available;
+    if (added < 0) added = 0;
+
     return JSON.stringify({
+      total: total,
       available: available,
       added: added,
       rows: rows.length,
@@ -261,7 +287,7 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Check Available Checkboxes ═══════
+  // ═══════ Check Available ═══════
   static const checkAvailable = r'''
 (function(){
   try {
