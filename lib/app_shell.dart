@@ -7,7 +7,7 @@ import 'widgets.dart';
 const String kLoginUrl = 'https://imssms.org/login';
 const String kNumbersUrl = 'https://imssms.org/numbers';
 
-enum Stage { loading, ready, error }
+enum Stage { loading, ready }
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -42,7 +42,9 @@ class _AppShellState extends State<AppShell> {
       },
       onLoadStop: (c, url) async {
         final u = url?.toString() ?? '';
-        if (u.contains('/login')) {
+        debugPrint('URL: $u');
+
+        if (u.contains('/login') || u.endsWith('/login')) {
           await _tryLogin();
         } else if (u.contains('/numbers')) {
           if (mounted) {
@@ -53,6 +55,12 @@ class _AppShellState extends State<AppShell> {
           }
         }
       },
+      onReceivedError: (c, req, err) {
+        debugPrint('WebView error: ${err.description}');
+        if (mounted) {
+          setState(() => _statusMsg = 'خطأ: ${err.description}');
+        }
+      },
     );
   }
 
@@ -60,10 +68,11 @@ class _AppShellState extends State<AppShell> {
     if (!mounted) return;
     setState(() => _statusMsg = 'جاري تسجيل الدخول…');
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 15; i++) {
       await Future.delayed(const Duration(milliseconds: 500));
       if (_web == null) continue;
       final r = await _eval(WebScripts.fillLogin);
+      debugPrint('fillLogin attempt $i: $r');
       if (r == 'ok') break;
     }
 
@@ -105,10 +114,10 @@ class _AppShellState extends State<AppShell> {
     return Scaffold(
       body: Stack(
         children: [
-          // WebView
+          // ═══ WebView دايماً في الخلفية ═══
           Positioned.fill(child: _webView),
 
-          // Loading
+          // ═══ Loading Screen ═══
           if (_stage == Stage.loading)
             Positioned.fill(
               child: Container(
@@ -174,61 +183,68 @@ class _AppShellState extends State<AppShell> {
               ),
             ),
 
-          // HomePage — تظهر فقط لما يكون مخفي الـ WebView
+          // ═══ HomePage فوق كل حاجة (بس مخفية لما WebView ظاهر) ═══
           if (_stage == Stage.ready)
-            ValueListenableBuilder<bool>(
-              valueListenable: _showWeb,
-              builder: (context, showWeb, child) {
-                if (showWeb) return const SizedBox.shrink();
-                return Positioned.fill(
-                  child: HomePage(
-                    evalJs: _eval,
-                    onReload: () async {
-                      setState(() {
-                        _stage = Stage.loading;
-                        _statusMsg = 'جاري إعادة التحميل…';
-                      });
-                      try {
-                        await _web?.loadUrl(
-                            urlRequest: URLRequest(url: WebUri(kLoginUrl)));
-                      } catch (_) {}
-                    },
-                    onToggleWeb: () => _showWeb.value = !_showWeb.value,
-                  ),
-                );
-              },
+            Positioned.fill(
+              child: ValueListenableBuilder<bool>(
+                valueListenable: _showWeb,
+                builder: (context, showWeb, _) {
+                  if (showWeb) return const SizedBox.shrink();
+                  return Container(
+                    color: theme.scaffoldBackgroundColor,
+                    child: HomePage(
+                      evalJs: _eval,
+                      onReload: () async {
+                        setState(() {
+                          _stage = Stage.loading;
+                          _statusMsg = 'جاري إعادة التحميل…';
+                        });
+                        try {
+                          await _web?.loadUrl(
+                            urlRequest:
+                                URLRequest(url: WebUri(kLoginUrl)),
+                          );
+                        } catch (_) {}
+                      },
+                      onToggleWeb: () => _showWeb.value = !_showWeb.value,
+                    ),
+                  );
+                },
+              ),
             ),
 
-          // زرار "إخفاء" — يظهر فقط لما يكون WebView ظاهر
+          // ═══ زر "إخفاء" لما WebView ظاهر ═══
           if (_stage == Stage.ready)
             ValueListenableBuilder<bool>(
               valueListenable: _showWeb,
-              builder: (context, showWeb, child) {
+              builder: (context, showWeb, _) {
                 if (!showWeb) return const SizedBox.shrink();
-                return Positioned(
-                  top: 40,
-                  right: 16,
-                  child: SafeArea(
-                    child: Material(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(30),
-                      child: InkWell(
+                return SafeArea(
+                  child: Align(
+                    alignment: Alignment.topRight,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 12, right: 16),
+                      child: Material(
+                        color: Colors.red,
                         borderRadius: BorderRadius.circular(30),
-                        onTap: () => _showWeb.value = false,
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 10),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.visibility_off_rounded,
-                                  color: Colors.white, size: 18),
-                              SizedBox(width: 6),
-                              Text('إخفاء',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold)),
-                            ],
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(30),
+                          onTap: () => _showWeb.value = false,
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.visibility_off_rounded,
+                                    color: Colors.white, size: 18),
+                                SizedBox(width: 6),
+                                Text('إخفاء',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold)),
+                              ],
+                            ),
                           ),
                         ),
                       ),
