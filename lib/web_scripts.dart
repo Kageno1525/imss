@@ -127,13 +127,75 @@ class WebScripts {
 })()
 ''';
 
-  // ⭐⭐⭐ setPageSize5000 — بنفس applyVueSelect من IMS الأول
-  static const setPageSize5000 = r'''
+  // ⭐⭐⭐ دوس على زرار الترتيب بتاع Client
+  static const sortClientColumn = r'''
 (function(){
   try {
-    var targetVal = '5000';
+    var th = document.querySelector('table th.cls-sort');
+    if (!th) {
+      var ths = document.querySelectorAll('table th');
+      for (var i=0;i<ths.length;i++){
+        var t = (ths[i].innerText||'') + (ths[i].textContent||'');
+        if (t.indexOf('Client') >= 0){
+          th = ths[i];
+          break;
+        }
+      }
+    }
+    if (!th) return 'no-th';
 
-    // 1) ابحث عن select اللي فيه option value="5000"
+    var cls = th.className || '';
+    var isAsc = cls.indexOf('is-asc') >= 0;
+    var isDesc = cls.indexOf('is-desc') >= 0;
+
+    // نضغط على الرأس
+    th.click();
+
+    return 'ok|before=' + (isAsc ? 'asc' : (isDesc ? 'desc' : 'none'));
+  } catch(e){ return 'err:' + e.message; }
+})()
+''';
+
+  // ⭐⭐⭐ اقرا أول صفين Client
+  static const readFirstTwoClients = r'''
+(function(){
+  try {
+    var table = document.querySelector('table');
+    if (!table) return JSON.stringify([]);
+
+    var clientIdx = -1;
+    var ths = table.querySelectorAll('th');
+    for (var i=0;i<ths.length;i++){
+      var c = ths[i].cloneNode(true);
+      var ex = c.querySelectorAll('span, svg');
+      for (var x=0;x<ex.length;x++) ex[x].remove();
+      var t = (c.innerText||c.textContent||'').trim();
+      if (t === 'Client'){ clientIdx = i; break; }
+    }
+    if (clientIdx < 0) return JSON.stringify([]);
+
+    var rows = table.querySelectorAll('tr.vrow');
+    var result = [];
+    var limit = Math.min(2, rows.length);
+    for (var r=0;r<limit;r++){
+      var tds = rows[r].querySelectorAll('td');
+      if (clientIdx >= tds.length) { result.push(''); continue; }
+      var cell = tds[clientIdx].cloneNode(true);
+      var ex2 = cell.querySelectorAll('button, svg');
+      for (var k=0;k<ex2.length;k++) ex2[k].remove();
+      var v = (cell.innerText||cell.textContent||'').trim();
+      result.push(v);
+    }
+    return JSON.stringify(result);
+  } catch(e){ return 'err:' + e.message; }
+})()
+''';
+
+  // ⭐⭐⭐ غيّر page size لأي رقم
+  static const setPageSize = r'''
+(function(){
+  try {
+    var targetVal = '%SIZE%';
     var all = document.querySelectorAll('select');
     var target = null;
     for (var k=0; k<all.length; k++){
@@ -147,29 +209,19 @@ class WebScripts {
     }
     if (!target) return 'no-select';
 
-    // 2) تحديد الـ index
     var idx = -1;
     for (var i = 0; i < target.options.length; i++) {
-      if (String(target.options[i].value) === targetVal) {
-        idx = i;
-        break;
-      }
+      if (String(target.options[i].value) === targetVal) { idx = i; break; }
     }
     if (idx === -1) return 'no-opt';
 
-    // 3) Native setter على selectedIndex
     target.selectedIndex = idx;
-
-    // 4) كسر overrides Vue بـ native setter
     try {
       var setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
       setter.call(target, targetVal);
     } catch(e) { target.value = targetVal; }
-
-    // 5) Vue internal value store
     try { target._value = targetVal; } catch(e){}
 
-    // 6) dispatch events
     ['focus', 'input', 'change', 'blur'].forEach(function(evtName){
       var ev;
       try {
@@ -181,7 +233,6 @@ class WebScripts {
       target.dispatchEvent(ev);
     });
 
-    // 7) Direct VNode handler
     try {
       var vnode = target.__vnode || target._vnode;
       if (vnode && vnode.props) {
@@ -194,51 +245,18 @@ class WebScripts {
       }
     } catch(e){}
 
-    return 'ok|val=' + target.value + '|idx=' + target.selectedIndex;
+    return 'ok|val=' + target.value;
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
 
-  // ⭐⭐⭐ قراءة الحالة العامة
-  static const getPageInfo = r'''
+  // ⭐⭐⭐ حدد N صف متاح (checkbox)
+  static const checkAvailableRows = r'''
 (function(){
   try {
-    var total = 0;
-    var pgText = '';
-    var pg = document.querySelector('.pg-left');
-    if (pg){
-      pgText = (pg.innerText||'').trim();
-      var m = pgText.match(/of\s+([\d,]+)/i);
-      if (m) total = parseInt(m[1].replace(/,/g,''), 10);
-    }
-
-    var rows = document.querySelectorAll('table tr.vrow').length;
-
-    var hasNext = false;
-    var btns = document.querySelectorAll('.paginator-controls button');
-    for (var b=0;b<btns.length;b++){
-      if ((btns[b].getAttribute('title')||'') === 'Next' && !btns[b].disabled){
-        hasNext = true;
-        break;
-      }
-    }
-
-    return JSON.stringify({
-      total: total,
-      rows: rows,
-      hasNext: hasNext,
-      pgText: pgText
-    });
-  } catch(e){ return 'err: ' + e.message; }
-})()
-''';
-
-  // ⭐⭐⭐ عدد المتاح في الصفحة الحالية
-  static const countAvailableOnPage = r'''
-(function(){
-  try {
+    var n = %COUNT%;
     var table = document.querySelector('table');
-    if (!table) return '0';
+    if (!table) return 'no-table';
 
     var clientIdx = -1;
     var ths = table.querySelectorAll('th');
@@ -249,89 +267,35 @@ class WebScripts {
       var t = (c.innerText||c.textContent||'').trim();
       if (t === 'Client'){ clientIdx = i; break; }
     }
-    if (clientIdx < 0) return '0';
+    if (clientIdx < 0) return 'no-client-col';
 
     var rows = table.querySelectorAll('tr.vrow');
-    var available = 0;
-    for (var r=0;r<rows.length;r++){
-      var tds = rows[r].querySelectorAll('td');
+    var checked = 0;
+    var log = [];
+
+    for (var r=0;r<rows.length && checked < n;r++){
+      var row = rows[r];
+      var tds = row.querySelectorAll('td');
       if (clientIdx >= tds.length) continue;
       var cell = tds[clientIdx].cloneNode(true);
       var ex2 = cell.querySelectorAll('button, svg');
       for (var k=0;k<ex2.length;k++) ex2[k].remove();
       var v = (cell.innerText||cell.textContent||'').trim();
-      if (v === '-' || v === '' || v === '—' || v === '–') available++;
-    }
-    return String(available);
-  } catch(e){ return 'err:' + e.message; }
-})()
-''';
 
-  // ⭐ روح للصفحة الأولى + Next
-  static const goFirstPage = r'''
-(function(){
-  try {
-    var btns = document.querySelectorAll('.paginator-controls button');
-    for (var i=0;i<btns.length;i++){
-      if ((btns[i].getAttribute('title')||'') === 'First'){
-        if (btns[i].disabled) return 'already-first';
-        btns[i].click();
-        return 'ok';
-      }
-    }
-    return 'no-btn';
-  } catch(e){ return 'err:' + e.message; }
-})()
-''';
-
-  static const clickNextPage = r'''
-(function(){
-  try {
-    var btns = document.querySelectorAll('.paginator-controls button');
-    for (var i=0;i<btns.length;i++){
-      if ((btns[i].getAttribute('title')||'') === 'Next'){
-        if (btns[i].disabled) return 'disabled';
-        btns[i].click();
-        return 'ok';
-      }
-    }
-    return 'no-btn';
-  } catch(e){ return 'err:' + e.message; }
-})()
-''';
-
-  // ═══════ Check Available ═══════
-  static const checkAvailable = r'''
-(function(){
-  try {
-    var n = %COUNT%;
-    var clientIdx = -1;
-    var ths = document.querySelectorAll('table th');
-    for (var i=0;i<ths.length;i++){
-      var clone = ths[i].cloneNode(true);
-      var spans = clone.querySelectorAll('span, svg');
-      for (var x=0;x<spans.length;x++) spans[x].remove();
-      var t = (clone.innerText || clone.textContent || '').trim();
-      if (t === 'Client'){ clientIdx = i; break; }
-    }
-    if (clientIdx < 0) return 'no-column';
-
-    var rows = document.querySelectorAll('tr.vrow');
-    var checked = 0;
-    for (var r=0;r<rows.length && checked < n;r++){
-      var row = rows[r];
-      var tds = row.querySelectorAll('td');
-      if (clientIdx >= tds.length) continue;
-      var clone2 = tds[clientIdx].cloneNode(true);
-      var extra = clone2.querySelectorAll('button, svg');
-      for (var k=0;k<extra.length;k++) extra[k].remove();
-      var v = (clone2.innerText || clone2.textContent || '').trim();
-      if (v === '-' || v === '' || v === '—' || v === '–'){
+      var isAvail = (v === '-' || v === '' || v === '—' || v === '–');
+      if (isAvail){
         var cb = row.querySelector('input.checkbox');
-        if (cb && !cb.checked){ cb.click(); checked++; }
+        if (cb && !cb.checked){
+          cb.click();
+          checked++;
+        } else if (cb && cb.checked){
+          checked++;
+        }
+      } else {
+        if (log.length < 3) log.push('r' + r + '=' + v.substring(0,10));
       }
     }
-    return 'ok|checked=' + checked;
+    return 'ok|checked=' + checked + '|skip=' + log.join(',');
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
@@ -429,7 +393,7 @@ class WebScripts {
   try {
     var b = document.querySelector('.modal-backdrop .modal-footer button.btn.btn-primary');
     if (!b) {
-      var all = document.querySelectorAll('.modal-footer button.btn-primary');
+      var all = document.querySelectorAll('.modal-footer button.btn.btn-primary');
       if (all.length > 0) b = all[0];
     }
     if (!b) return 'no-btn';
