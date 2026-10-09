@@ -1,11 +1,8 @@
-import 'widgets.dart';
-import 'dart:async';
-import 'dart:collection';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'web_scripts.dart';
 import 'home_page.dart';
+import 'widgets.dart';
 
 const String kLoginUrl = 'https://imssms.org/login';
 const String kNumbersUrl = 'https://imssms.org/numbers';
@@ -24,6 +21,7 @@ class _AppShellState extends State<AppShell> {
 
   Stage _stage = Stage.loading;
   String _statusMsg = 'جاري فتح الموقع…';
+  final ValueNotifier<bool> _showWeb = ValueNotifier(false);
 
   @override
   void initState() {
@@ -47,7 +45,6 @@ class _AppShellState extends State<AppShell> {
         if (u.contains('/login')) {
           await _tryLogin();
         } else if (u.contains('/numbers')) {
-          // تمام، إحنا في صفحة الأرقام
           if (mounted) {
             setState(() {
               _stage = Stage.ready;
@@ -63,22 +60,18 @@ class _AppShellState extends State<AppShell> {
     if (!mounted) return;
     setState(() => _statusMsg = 'جاري تسجيل الدخول…');
 
-    // جرّب 10 مرات لحد ما الفورم يظهر
     for (int i = 0; i < 10; i++) {
       await Future.delayed(const Duration(milliseconds: 500));
       if (_web == null) continue;
-
       final r = await _eval(WebScripts.fillLogin);
       if (r == 'ok') break;
     }
 
-    // استنى الصفحة تتغير
     await Future.delayed(const Duration(milliseconds: 2500));
 
     if (!mounted) return;
     setState(() => _statusMsg = 'جاري فتح صفحة الأرقام…');
 
-    // روح على صفحة الأرقام
     try {
       await _web?.loadUrl(urlRequest: URLRequest(url: WebUri(kNumbersUrl)));
     } catch (_) {}
@@ -105,9 +98,6 @@ class _AppShellState extends State<AppShell> {
     return s;
   }
 
-  // ═══════ API للصفحة الرئيسية ═══════
-  Future<String> evalJs(String js) => _eval(js);
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -118,7 +108,7 @@ class _AppShellState extends State<AppShell> {
           // WebView
           Positioned.fill(child: _webView),
 
-          // الواجهة
+          // Loading
           if (_stage == Stage.loading)
             Positioned.fill(
               child: Container(
@@ -184,21 +174,68 @@ class _AppShellState extends State<AppShell> {
               ),
             ),
 
+          // HomePage — تظهر فقط لما يكون مخفي الـ WebView
           if (_stage == Stage.ready)
-            Positioned.fill(
-              child: HomePage(
-                evalJs: _eval,
-                onReload: () async {
-                  setState(() {
-                    _stage = Stage.loading;
-                    _statusMsg = 'جاري إعادة التحميل…';
-                  });
-                  try {
-                    await _web?.loadUrl(
-                        urlRequest: URLRequest(url: WebUri(kLoginUrl)));
-                  } catch (_) {}
-                },
-              ),
+            ValueListenableBuilder<bool>(
+              valueListenable: _showWeb,
+              builder: (context, showWeb, child) {
+                if (showWeb) return const SizedBox.shrink();
+                return Positioned.fill(
+                  child: HomePage(
+                    evalJs: _eval,
+                    onReload: () async {
+                      setState(() {
+                        _stage = Stage.loading;
+                        _statusMsg = 'جاري إعادة التحميل…';
+                      });
+                      try {
+                        await _web?.loadUrl(
+                            urlRequest: URLRequest(url: WebUri(kLoginUrl)));
+                      } catch (_) {}
+                    },
+                    onToggleWeb: () => _showWeb.value = !_showWeb.value,
+                  ),
+                );
+              },
+            ),
+
+          // زرار "إخفاء" — يظهر فقط لما يكون WebView ظاهر
+          if (_stage == Stage.ready)
+            ValueListenableBuilder<bool>(
+              valueListenable: _showWeb,
+              builder: (context, showWeb, child) {
+                if (!showWeb) return const SizedBox.shrink();
+                return Positioned(
+                  top: 40,
+                  right: 16,
+                  child: SafeArea(
+                    child: Material(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(30),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(30),
+                        onTap: () => _showWeb.value = false,
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.visibility_off_rounded,
+                                  color: Colors.white, size: 18),
+                              SizedBox(width: 6),
+                              Text('إخفاء',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
         ],
       ),
