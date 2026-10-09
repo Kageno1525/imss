@@ -23,23 +23,8 @@ class WebScripts {
     }
     fire(u, U);
     fire(p, P);
-    setTimeout(function(){
-      try { b.click(); } catch(e){}
-    }, 150);
+    setTimeout(function(){ try { b.click(); } catch(e){} }, 150);
     return 'ok';
-  } catch(e){ return 'err:' + e.message; }
-})()
-''';
-
-  static const diag = r'''
-(function(){
-  try {
-    var url = location.href;
-    var inputs = document.querySelectorAll('input').length;
-    var hasPwd = !!document.querySelector('input[type=password]');
-    var hasTable = !!document.querySelector('table');
-    var hasRows = document.querySelectorAll('tr.vrow').length;
-    return [url, inputs, hasPwd?1:0, hasTable?1:0, hasRows].join('|');
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
@@ -58,10 +43,6 @@ class WebScripts {
     return 'ok';
   } catch(e){ return 'err:' + e.message; }
 })()
-''';
-
-  static const isRangeDropdownOpen = r'''
-(function(){ return document.querySelector('.ss-pop') ? 'yes' : 'no'; })()
 ''';
 
   static const readRanges = r'''
@@ -128,24 +109,11 @@ class WebScripts {
 })()
 ''';
 
-  static const readSelectedRange = r'''
-(function(){
-  try {
-    var btn = document.querySelector('button.ss-trigger.input[aria-haspopup="listbox"]');
-    if (!btn) return '';
-    var sp = btn.querySelector('.ss-placeholder, span');
-    return sp ? (sp.innerText||sp.textContent||'').trim() : (btn.innerText||'').trim();
-  } catch(e){ return ''; }
-})()
-''';
-
   // ═══════ Filter ═══════
   static const clickFilter = r'''
 (function(){
   try {
-    // اقفل أي قائمة مفتوحة الأول
     document.body.click();
-    
     var f = document.querySelector('button.btn.btn-danger');
     if (!f){
       var btns = document.querySelectorAll('button');
@@ -161,125 +129,153 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Page size = 5000 (نسخة قوية) ═══════
-  static const setPageSize5000 = r'''
+  // ⭐ قراءة الـ options الحقيقية للـ page size
+  static const readPageSizeInfo = r'''
 (function(){
   try {
     var sels = document.querySelectorAll('select.select, select');
     for (var i=0;i<sels.length;i++){
       var s = sels[i];
-      var idx = -1;
+      var vals = [];
       for (var j=0;j<s.options.length;j++){
-        if (String(s.options[j].value) === '5000'){ idx = j; break; }
+        vals.push(String(s.options[j].value));
       }
-      if (idx < 0) continue;
-
-      // Native setter
-      try {
-        var setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
-        setter.call(s, '5000');
-      } catch(e){ s.value = '5000'; }
-      
-      s.selectedIndex = idx;
-      
-      for (var k=0;k<s.options.length;k++){
-        s.options[k].selected = (k === idx);
+      // نعتبره الـ page size لو عنده 5000 أو 1000 أو 500
+      if (vals.indexOf('5000') >= 0 || vals.indexOf('1000') >= 0 ||
+          vals.indexOf('500') >= 0){
+        return JSON.stringify({
+          current: String(s.value),
+          options: vals
+        });
       }
-      
-      // كل الأحداث
-      s.dispatchEvent(new Event('input', {bubbles:true}));
-      s.dispatchEvent(new Event('change', {bubbles:true}));
-      
-      return 'ok|v=' + s.value;
     }
-    return 'not-found';
+    return 'no-select';
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
 
-  // ═══════ Stats (نسخة قوية) ═══════
+  // ⭐ اختيار أكبر قيمة في الـ page size (مش لازم 5000)
+  static const setMaxPageSize = r'''
+(function(){
+  try {
+    var sels = document.querySelectorAll('select.select, select');
+    for (var i=0;i<sels.length;i++){
+      var s = sels[i];
+      var vals = [];
+      for (var j=0;j<s.options.length;j++){
+        vals.push(String(s.options[j].value));
+      }
+      if (vals.indexOf('5000') < 0 && vals.indexOf('1000') < 0 &&
+          vals.indexOf('500') < 0){
+        continue;
+      }
+
+      // دور على أكبر قيمة
+      var maxIdx = -1;
+      var maxNum = -1;
+      for (var k=0;k<s.options.length;k++){
+        var v = String(s.options[k].value);
+        var n = parseInt(v.replace(/,/g,''), 10);
+        if (!isNaN(n) && n > maxNum){
+          maxNum = n;
+          maxIdx = k;
+        }
+      }
+      if (maxIdx < 0) return 'no-max';
+      var maxVal = String(s.options[maxIdx].value);
+
+      try {
+        var setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+        setter.call(s, maxVal);
+      } catch(e){ s.value = maxVal; }
+      s.selectedIndex = maxIdx;
+      for (var m=0;m<s.options.length;m++){
+        s.options[m].selected = (m === maxIdx);
+      }
+      s.dispatchEvent(new Event('input', {bubbles:true}));
+      s.dispatchEvent(new Event('change', {bubbles:true}));
+
+      return 'ok|set=' + maxVal + '|total=' + vals.length;
+    }
+    return 'no-select';
+  } catch(e){ return 'err:' + e.message; }
+})()
+''';
+
+  // ⭐ readStats مع debug شامل
   static const readStats = r'''
 (function(){
   try {
     var debug = [];
-
-    // ══ 1) total من "of N entries" ══
-    var total = 0;
-    var pg = document.querySelector('.pg-left');
-    if (pg){
-      var txt = (pg.innerText||pg.textContent||'').trim();
-      var m = txt.match(/of\s+([\d,]+)/i);
-      if (m) total = parseInt(m[1].replace(/,/g,''), 10) || 0;
-      debug.push('pg="' + txt.substring(0,40) + '"');
-    } else {
-      debug.push('no-pg');
-    }
-
-    // ══ 2) جدول ══
     var table = document.querySelector('table');
     if (!table){
       return JSON.stringify({
-        total: total, available: 0, added: 0,
+        total: 0, available: 0, added: 0,
         rowsOnPage: 0, clientIdx: -1,
-        debug: 'no-table|' + debug.join('|')
+        debug: 'NO-TABLE'
       });
     }
 
-    // ══ 3) index عمود Client ══
-    var clientIdx = -1;
-    var ths = table.querySelectorAll('th');
-    debug.push('ths=' + ths.length);
-    for (var i=0;i<ths.length;i++){
-      // نجيب نص الـ th من غير الـ span
-      var clone = ths[i].cloneNode(true);
-      var spans = clone.querySelectorAll('span');
-      for (var x=0;x<spans.length;x++) spans[x].remove();
-      var t = (clone.innerText || clone.textContent || '').trim();
-      if (t === 'Client' || t.indexOf('Client') === 0){
-        clientIdx = i;
-        break;
-      }
+    // ══ paginator ══
+    var pg = document.querySelector('.pg-left');
+    var pgText = '';
+    var totalFromPg = 0;
+    if (pg){
+      pgText = (pg.innerText || pg.textContent || '').trim();
+      var m = pgText.match(/of\s+([\d,]+)/i);
+      if (m) totalFromPg = parseInt(m[1].replace(/,/g,''), 10) || 0;
     }
-    debug.push('clientIdx=' + clientIdx);
+    debug.push('pg="' + pgText.substring(0, 60) + '"');
+    debug.push('totalFromPg=' + totalFromPg);
 
-    // ══ 4) عد الصفوف ══
+    // ══ عدد الصفوف الحقيقي ══
     var rows = table.querySelectorAll('tr.vrow');
     debug.push('rows=' + rows.length);
 
+    // ══ clientIdx ══
+    var clientIdx = -1;
+    var ths = table.querySelectorAll('th');
+    var thTexts = [];
+    for (var i=0;i<ths.length;i++){
+      var clone = ths[i].cloneNode(true);
+      var spans = clone.querySelectorAll('span, svg');
+      for (var x=0;x<spans.length;x++) spans[x].remove();
+      var t = (clone.innerText || clone.textContent || '').trim();
+      thTexts.push('[' + i + ']=' + t);
+      if (t === 'Client' && clientIdx < 0){
+        clientIdx = i;
+      }
+    }
+    debug.push('ths=' + thTexts.join(','));
+    debug.push('clientIdx=' + clientIdx);
+
+    // ══ عد المتاح والمضاف ══
     var available = 0, added = 0;
     var samples = [];
 
-    for (var r=0;r<rows.length;r++){
-      var tds = rows[r].querySelectorAll('td');
-      if (clientIdx < 0 || clientIdx >= tds.length){
-        // لو مفيش clientIdx، استخدم fallback: أي td بقيمته - 
-        continue;
-      }
-      
-      var td = tds[clientIdx];
-      var clone2 = td.cloneNode(true);
-      var extra = clone2.querySelectorAll('button, svg');
-      for (var k=0;k<extra.length;k++) extra[k].remove();
-      
-      var v = (clone2.innerText || clone2.textContent || '').trim();
+    if (clientIdx >= 0){
+      for (var r=0;r<rows.length;r++){
+        var tds = rows[r].querySelectorAll('td');
+        if (clientIdx >= tds.length) continue;
 
-      if (r < 3) samples.push('"' + v.substring(0,15) + '"');
+        var clone2 = tds[clientIdx].cloneNode(true);
+        var extra = clone2.querySelectorAll('button, svg');
+        for (var k=0;k<extra.length;k++) extra[k].remove();
+        var v = (clone2.innerText || clone2.textContent || '').trim();
 
-      // القيم اللي = متاح
-      if (v === '-' || v === '' || v === '—' || v === '–' ||
-          v.toLowerCase() === 'n/a'){
-        available++;
-      } else {
-        added++;
+        if (r < 5) samples.push('[' + r + ']="' + v.substring(0,20) + '"');
+
+        if (v === '-' || v === '' || v === '—' || v === '–'){
+          available++;
+        } else {
+          added++;
+        }
       }
     }
-
-    debug.push('samples=' + samples.join(','));
-    debug.push('avail=' + available);
-    debug.push('add=' + added);
+    debug.push('samples=' + samples.join(' '));
 
     return JSON.stringify({
-      total: total,
+      total: totalFromPg,
       available: available,
       added: added,
       rowsOnPage: rows.length,
@@ -295,18 +291,14 @@ class WebScripts {
 (function(){
   try {
     var n = %COUNT%;
-
     var clientIdx = -1;
     var ths = document.querySelectorAll('table th');
     for (var i=0;i<ths.length;i++){
       var clone = ths[i].cloneNode(true);
-      var spans = clone.querySelectorAll('span');
+      var spans = clone.querySelectorAll('span, svg');
       for (var x=0;x<spans.length;x++) spans[x].remove();
       var t = (clone.innerText || clone.textContent || '').trim();
-      if (t === 'Client' || t.indexOf('Client') === 0){
-        clientIdx = i;
-        break;
-      }
+      if (t === 'Client'){ clientIdx = i; break; }
     }
     if (clientIdx < 0) return 'no-column';
 
@@ -316,19 +308,15 @@ class WebScripts {
       var row = rows[r];
       var tds = row.querySelectorAll('td');
       if (clientIdx >= tds.length) continue;
-      
+
       var clone2 = tds[clientIdx].cloneNode(true);
       var extra = clone2.querySelectorAll('button, svg');
       for (var k=0;k<extra.length;k++) extra[k].remove();
       var v = (clone2.innerText || clone2.textContent || '').trim();
 
-      if (v === '-' || v === '' || v === '—' || v === '–' ||
-          v.toLowerCase() === 'n/a'){
+      if (v === '-' || v === '' || v === '—' || v === '–'){
         var cb = row.querySelector('input.checkbox');
-        if (cb && !cb.checked){
-          cb.click();
-          checked++;
-        }
+        if (cb && !cb.checked){ cb.click(); checked++; }
       }
     }
     return 'ok|checked=' + checked;
@@ -342,33 +330,22 @@ class WebScripts {
   try {
     var b = document.querySelector('.head-actions button.btn.btn-primary');
     if (b){ b.click(); return 'ok'; }
-    var all = document.querySelectorAll('button.btn.btn-primary');
-    for (var i=0;i<all.length;i++){
-      var t = (all[i].innerText||'').trim().toLowerCase();
-      if (t.indexOf('add') >= 0 || t.indexOf('إضافة') >= 0){
-        all[i].click();
-        return 'ok';
-      }
-    }
     return 'no-btn';
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
 
-  // ═══════ Modal: DLR = 7/1 ═══════
   static const selectDlr7_1 = r'''
 (function(){
   try {
     var sels = document.querySelectorAll('.modal-body select.select, select.select, select');
     for (var i=0;i<sels.length;i++){
       var s = sels[i];
-      var hasOpt = false;
       var idx = -1;
       for (var j=0;j<s.options.length;j++){
-        if (String(s.options[j].value) === '7-1'){ hasOpt = true; idx = j; break; }
+        if (String(s.options[j].value) === '7-1'){ idx = j; break; }
       }
-      if (!hasOpt) continue;
-      
+      if (idx < 0) continue;
       try {
         var setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
         setter.call(s, '7-1');
@@ -386,7 +363,6 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Modal: Open user dropdown ═══════
   static const openUserDropdown = r'''
 (function(){
   try {
@@ -405,7 +381,6 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Modal: Search user ═══════
   static const searchUser = r'''
 (function(){
   try {
@@ -426,7 +401,6 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Modal: Select user ═══════
   static const selectUser = r'''
 (function(){
   try {
@@ -445,7 +419,6 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Modal: Confirm ═══════
   static const confirmAdd = r'''
 (function(){
   try {
@@ -459,9 +432,5 @@ class WebScripts {
     return 'ok';
   } catch(e){ return 'err:' + e.message; }
 })()
-''';
-
-  static const isModalOpen = r'''
-(function(){ return document.querySelector('.modal-backdrop') ? 'yes' : 'no'; })()
 ''';
 }
