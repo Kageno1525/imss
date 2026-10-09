@@ -36,10 +36,10 @@ class WebScripts {
   try {
     var url = location.href;
     var inputs = document.querySelectorAll('input').length;
-    var buttons = document.querySelectorAll('button').length;
     var hasPwd = !!document.querySelector('input[type=password]');
     var hasTable = !!document.querySelector('table');
-    return [url, inputs, buttons, hasPwd ? 1 : 0, hasTable ? 1 : 0].join('|');
+    var hasRows = document.querySelectorAll('tr.vrow').length;
+    return [url, inputs, hasPwd?1:0, hasTable?1:0, hasRows].join('|');
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
@@ -80,7 +80,6 @@ class WebScripts {
 })()
 ''';
 
-  /// بحث داخل قائمة الرنجات (يستخدم searchInput = %QUERY%)
   static const searchRanges = r'''
 (function(){
   try {
@@ -101,7 +100,6 @@ class WebScripts {
 })()
 ''';
 
-  /// اختيار رنج بالاسم
   static const selectRange = r'''
 (function(){
   try {
@@ -145,6 +143,9 @@ class WebScripts {
   static const clickFilter = r'''
 (function(){
   try {
+    // اقفل أي قائمة مفتوحة الأول
+    document.body.click();
+    
     var f = document.querySelector('button.btn.btn-danger');
     if (!f){
       var btns = document.querySelectorAll('button');
@@ -160,85 +161,152 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Page size = 5000 ═══════
+  // ═══════ Page size = 5000 (نسخة قوية) ═══════
   static const setPageSize5000 = r'''
 (function(){
   try {
     var sels = document.querySelectorAll('select.select, select');
     for (var i=0;i<sels.length;i++){
       var s = sels[i];
-      var has5000 = false;
+      var idx = -1;
       for (var j=0;j<s.options.length;j++){
-        if (String(s.options[j].value) === '5000'){ has5000 = true; break; }
+        if (String(s.options[j].value) === '5000'){ idx = j; break; }
       }
-      if (has5000){
+      if (idx < 0) continue;
+
+      // Native setter
+      try {
         var setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
-        try { setter.call(s, '5000'); } catch(e){ s.value = '5000'; }
-        for (var k=0;k<s.options.length;k++){
-          s.options[k].selected = (String(s.options[k].value) === '5000');
-        }
-        s.dispatchEvent(new Event('input', {bubbles:true}));
-        s.dispatchEvent(new Event('change', {bubbles:true}));
-        return 'ok';
+        setter.call(s, '5000');
+      } catch(e){ s.value = '5000'; }
+      
+      s.selectedIndex = idx;
+      
+      for (var k=0;k<s.options.length;k++){
+        s.options[k].selected = (k === idx);
       }
+      
+      // كل الأحداث
+      s.dispatchEvent(new Event('input', {bubbles:true}));
+      s.dispatchEvent(new Event('change', {bubbles:true}));
+      
+      return 'ok|v=' + s.value;
     }
     return 'not-found';
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
 
-  // ═══════ Stats ═══════
-  /// يرجع JSON فيه: total, available, added, rowsOnPage
+  // ═══════ Stats (نسخة قوية) ═══════
   static const readStats = r'''
 (function(){
   try {
-    // total من "Showing X to Y of N entries"
+    var debug = [];
+
+    // ══ 1) total من "of N entries" ══
     var total = 0;
     var pg = document.querySelector('.pg-left');
     if (pg){
-      var m = (pg.innerText||pg.textContent||'').match(/of\s+([\d,]+)/i);
+      var txt = (pg.innerText||pg.textContent||'').trim();
+      var m = txt.match(/of\s+([\d,]+)/i);
       if (m) total = parseInt(m[1].replace(/,/g,''), 10) || 0;
+      debug.push('pg="' + txt.substring(0,40) + '"');
+    } else {
+      debug.push('no-pg');
     }
 
-    // فهرس عمود Client
+    // ══ 2) جدول ══
+    var table = document.querySelector('table');
+    if (!table){
+      return JSON.stringify({
+        total: total, available: 0, added: 0,
+        rowsOnPage: 0, clientIdx: -1,
+        debug: 'no-table|' + debug.join('|')
+      });
+    }
+
+    // ══ 3) index عمود Client ══
     var clientIdx = -1;
-    var ths = document.querySelectorAll('table th');
+    var ths = table.querySelectorAll('th');
+    debug.push('ths=' + ths.length);
     for (var i=0;i<ths.length;i++){
-      var t = (ths[i].innerText||ths[i].textContent||'').trim();
-      if (t.indexOf('Client') >= 0){ clientIdx = i; break; }
+      // نجيب نص الـ th من غير الـ span
+      var clone = ths[i].cloneNode(true);
+      var spans = clone.querySelectorAll('span');
+      for (var x=0;x<spans.length;x++) spans[x].remove();
+      var t = (clone.innerText || clone.textContent || '').trim();
+      if (t === 'Client' || t.indexOf('Client') === 0){
+        clientIdx = i;
+        break;
+      }
     }
+    debug.push('clientIdx=' + clientIdx);
 
-    var rows = document.querySelectorAll('tr.vrow');
+    // ══ 4) عد الصفوف ══
+    var rows = table.querySelectorAll('tr.vrow');
+    debug.push('rows=' + rows.length);
+
     var available = 0, added = 0;
+    var samples = [];
+
     for (var r=0;r<rows.length;r++){
       var tds = rows[r].querySelectorAll('td');
-      if (clientIdx < 0 || clientIdx >= tds.length) continue;
-      var v = (tds[clientIdx].innerText || tds[clientIdx].textContent || '').trim();
-      if (v === '-' || v === '' || v === '—') available++;
-      else added++;
+      if (clientIdx < 0 || clientIdx >= tds.length){
+        // لو مفيش clientIdx، استخدم fallback: أي td بقيمته - 
+        continue;
+      }
+      
+      var td = tds[clientIdx];
+      var clone2 = td.cloneNode(true);
+      var extra = clone2.querySelectorAll('button, svg');
+      for (var k=0;k<extra.length;k++) extra[k].remove();
+      
+      var v = (clone2.innerText || clone2.textContent || '').trim();
+
+      if (r < 3) samples.push('"' + v.substring(0,15) + '"');
+
+      // القيم اللي = متاح
+      if (v === '-' || v === '' || v === '—' || v === '–' ||
+          v.toLowerCase() === 'n/a'){
+        available++;
+      } else {
+        added++;
+      }
     }
+
+    debug.push('samples=' + samples.join(','));
+    debug.push('avail=' + available);
+    debug.push('add=' + added);
 
     return JSON.stringify({
       total: total,
       available: available,
       added: added,
-      rowsOnPage: rows.length
+      rowsOnPage: rows.length,
+      clientIdx: clientIdx,
+      debug: debug.join('|')
     });
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
 
   // ═══════ Check Available Checkboxes ═══════
-  /// يختار N رقم متاح (Client = -) ويضغط الـ checkbox
   static const checkAvailable = r'''
 (function(){
   try {
     var n = %COUNT%;
+
     var clientIdx = -1;
     var ths = document.querySelectorAll('table th');
     for (var i=0;i<ths.length;i++){
-      var t = (ths[i].innerText||ths[i].textContent||'').trim();
-      if (t.indexOf('Client') >= 0){ clientIdx = i; break; }
+      var clone = ths[i].cloneNode(true);
+      var spans = clone.querySelectorAll('span');
+      for (var x=0;x<spans.length;x++) spans[x].remove();
+      var t = (clone.innerText || clone.textContent || '').trim();
+      if (t === 'Client' || t.indexOf('Client') === 0){
+        clientIdx = i;
+        break;
+      }
     }
     if (clientIdx < 0) return 'no-column';
 
@@ -248,8 +316,14 @@ class WebScripts {
       var row = rows[r];
       var tds = row.querySelectorAll('td');
       if (clientIdx >= tds.length) continue;
-      var v = (tds[clientIdx].innerText || tds[clientIdx].textContent || '').trim();
-      if (v === '-' || v === '' || v === '—'){
+      
+      var clone2 = tds[clientIdx].cloneNode(true);
+      var extra = clone2.querySelectorAll('button, svg');
+      for (var k=0;k<extra.length;k++) extra[k].remove();
+      var v = (clone2.innerText || clone2.textContent || '').trim();
+
+      if (v === '-' || v === '' || v === '—' || v === '–' ||
+          v.toLowerCase() === 'n/a'){
         var cb = row.querySelector('input.checkbox');
         if (cb && !cb.checked){
           cb.click();
@@ -262,17 +336,16 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Click Add Button ═══════
+  // ═══════ Add Button ═══════
   static const clickAddButton = r'''
 (function(){
   try {
     var b = document.querySelector('.head-actions button.btn.btn-primary');
     if (b){ b.click(); return 'ok'; }
-    // fallback: زر فيه كلمة Add أو إضافة
     var all = document.querySelectorAll('button.btn.btn-primary');
     for (var i=0;i<all.length;i++){
       var t = (all[i].innerText||'').trim().toLowerCase();
-      if (t.indexOf('add') >= 0 || t.indexOf('إضافة') >= 0 || t.indexOf('اضف') >= 0){
+      if (t.indexOf('add') >= 0 || t.indexOf('إضافة') >= 0){
         all[i].click();
         return 'ok';
       }
@@ -290,19 +363,23 @@ class WebScripts {
     for (var i=0;i<sels.length;i++){
       var s = sels[i];
       var hasOpt = false;
+      var idx = -1;
       for (var j=0;j<s.options.length;j++){
-        if (String(s.options[j].value) === '7-1'){ hasOpt = true; break; }
+        if (String(s.options[j].value) === '7-1'){ hasOpt = true; idx = j; break; }
       }
-      if (hasOpt){
+      if (!hasOpt) continue;
+      
+      try {
         var setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
-        try { setter.call(s, '7-1'); } catch(e){ s.value = '7-1'; }
-        for (var k=0;k<s.options.length;k++){
-          s.options[k].selected = (String(s.options[k].value) === '7-1');
-        }
-        s.dispatchEvent(new Event('input', {bubbles:true}));
-        s.dispatchEvent(new Event('change', {bubbles:true}));
-        return 'ok';
+        setter.call(s, '7-1');
+      } catch(e){ s.value = '7-1'; }
+      s.selectedIndex = idx;
+      for (var k=0;k<s.options.length;k++){
+        s.options[k].selected = (k === idx);
       }
+      s.dispatchEvent(new Event('input', {bubbles:true}));
+      s.dispatchEvent(new Event('change', {bubbles:true}));
+      return 'ok';
     }
     return 'not-found';
   } catch(e){ return 'err:' + e.message; }
@@ -313,14 +390,12 @@ class WebScripts {
   static const openUserDropdown = r'''
 (function(){
   try {
-    // الزر بتاع User في الـ modal
     var b = document.querySelector('.modal-backdrop .modal-body button.ss-trigger.input');
     if (!b) {
       var bs = document.querySelectorAll('.modal-body button.ss-trigger');
       if (bs.length > 0) b = bs[0];
     }
     if (!b){
-      // fallback: أي button داخل modal-body div:nth-child(2)
       b = document.querySelector('.modal-body > div:nth-child(2) button');
     }
     if (!b) return 'no-btn';
@@ -335,7 +410,7 @@ class WebScripts {
 (function(){
   try {
     var q = %QUERY%;
-    var inp = document.querySelector('.modal-body .ss-pop input.input[role="combobox"], .modal-body .ss-pop input.input, .modal-body input[role="combobox"]');
+    var inp = document.querySelector('.modal-body .ss-pop input.input[role="combobox"], .modal-body .ss-pop input.input');
     if (!inp) {
       var all = document.querySelectorAll('.modal-body input[role="combobox"]');
       if (all.length > 0) inp = all[all.length - 1];
@@ -351,7 +426,7 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Modal: Select user from list ═══════
+  // ═══════ Modal: Select user ═══════
   static const selectUser = r'''
 (function(){
   try {
@@ -386,7 +461,6 @@ class WebScripts {
 })()
 ''';
 
-  // ═══════ Modal: Check open ═══════
   static const isModalOpen = r'''
 (function(){ return document.querySelector('.modal-backdrop') ? 'yes' : 'no'; })()
 ''';
