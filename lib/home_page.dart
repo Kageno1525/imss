@@ -38,12 +38,6 @@ class _HomePageState extends State<HomePage> {
   bool _adding = false;
   bool _addDone = false;
 
-  // ⭐ صندوق التشخيص
-  String _diagPct = '';
-  String _diagPageSize = '';
-  String _diagRows = '';
-  String _diagPgText = '';
-
   static const _countOptions = [10, 25, 50, 100, 200];
 
   @override
@@ -115,10 +109,6 @@ class _HomePageState extends State<HomePage> {
       _selectedRange = null;
       _filterApplied = false;
       _stats = RangeStats(rangeName: '');
-      _diagPct = '';
-      _diagPageSize = '';
-      _diagRows = '';
-      _diagPgText = '';
     });
     await _loadRanges();
   }
@@ -162,79 +152,97 @@ class _HomePageState extends State<HomePage> {
     _log('═══ جاري تطبيق الفلتر ═══');
 
     try {
+      // 1) دوس على الفلتر
       final r = await widget.evalJs(WebScripts.clickFilter);
       _log('Filter: $r');
-      await Future.delayed(const Duration(milliseconds: 2500));
 
-      _log('الفلتر اتطبق ✅');
-      setState(() => _filterApplied = true);
-      await _loadStats();
+      // 2) استنى 3 ثواني للفلترة
+      await Future.delayed(const Duration(seconds: 3));
+
+      // 3) اقرا الحالة الحالية
+      final info1 = await widget.evalJs(WebScripts.getPageInfo);
+      _log('قبل 5000: $info1');
+
+      // 4) غيّر page size لـ 5000 (بنفس applyVueSelect)
+      final setRes = await widget.evalJs(WebScripts.setPageSize5000);
+      _log('set5000: $setRes');
+
+      // 5) استنى 4 ثواني للتحميل
+      _log('⏳ استنى التحميل…');
+      await Future.delayed(const Duration(seconds: 4));
+
+      // 6) اقرا الحالة بعد 5000
+      final info2 = await widget.evalJs(WebScripts.getPageInfo);
+      _log('بعد 5000: $info2');
+
+      int total = 0;
+      int rows = 0;
+      bool hasNext = false;
+      try {
+        final m = jsonDecode(info2) as Map;
+        total = (m['total'] ?? 0) as int;
+        rows = (m['rows'] ?? 0) as int;
+        hasNext = (m['hasNext'] ?? false) as bool;
+      } catch (_) {}
+
+      // 7) لو لسه فيه Next → يعني الـ 5000 مش كفى
+      //    ندوس Next ونكمل قراءة
+      int availableTotal = 0;
+
+      // اقرا المتاح من الصفحة الحالية
+      final av1 = await widget.evalJs(WebScripts.countAvailableOnPage);
+      int av = int.tryParse(av1) ?? 0;
+      availableTotal += av;
+      _log('الصفحة 1: متاح=$av، صفوف=$rows');
+
+      if (hasNext) {
+        _log('⚠️ لسه فيه صفحات تانية، استخدم Next…');
+        int pages = 1;
+        const maxPages = 50;
+
+        while (hasNext && pages < maxPages) {
+          await widget.evalJs(WebScripts.clickNextPage);
+          await Future.delayed(const Duration(milliseconds: 1500));
+          pages++;
+
+          final avNext = await widget.evalJs(WebScripts.countAvailableOnPage);
+          final avN = int.tryParse(avNext) ?? 0;
+          availableTotal += avN;
+
+          final infoN = await widget.evalJs(WebScripts.getPageInfo);
+          try {
+            final m = jsonDecode(infoN) as Map;
+            hasNext = (m['hasNext'] ?? false) as bool;
+            rows += (m['rows'] ?? 0) as int;
+          } catch (_) {}
+
+          if (pages % 3 == 0) {
+            _log('صفحة $pages: +$avN (المجموع: $availableTotal)');
+          }
+        }
+      }
+
+      // 8) احسب النتيجة
+      final added = total > 0 ? (total - availableTotal).clamp(0, total) : 0;
+
+      setState(() {
+        _stats = RangeStats(
+          rangeName: _selectedRange ?? '',
+          total: total,
+          available: availableTotal,
+          added: added,
+        );
+        _filterApplied = true;
+      });
+
+      _log('═══ النتيجة ═══');
+      _log('كلي=$total | متاح=$availableTotal | مضاف=$added');
     } catch (e) {
       _log('خطأ: $e');
     }
 
     setState(() => _filtering = false);
-  }
-
-  // ═══════ Load Stats ═══════
-  Future<void> _loadStats() async {
-    setState(() => _loadingStats = true);
-    _log('═══ تجهيز الإحصائيات ═══');
-
-    // 1) اقرأ التشخيص الأول
-    await _refreshDiagnostics();
-
-    // 2) غيّر page size لـ 5000
-    final setRes = await widget.evalJs(WebScripts.setPageSize5000);
-    _log('set5000: $setRes');
-
-    // 3) استنى التحميل
-    _log('⏳ استنى التحميل…');
-    await Future.delayed(const Duration(seconds: 4));
-
-    // 4) اقرأ التشخيص تاني
-    await _refreshDiagnostics();
-
-    // 5) اقرأ الإحصائيات
-    final raw = await widget.evalJs(WebScripts.readStats);
-    _log('stats: $raw');
-
-    try {
-      final m = jsonDecode(raw) as Map;
-      final s = RangeStats(
-        rangeName: _selectedRange ?? '',
-        total: (m['total'] ?? 0) as int,
-        available: (m['available'] ?? 0) as int,
-        added: (m['added'] ?? 0) as int,
-      );
-      setState(() => _stats = s);
-      _log('✅ كلي=${s.total} | متاح=${s.available} | مضاف=${s.added}');
-    } catch (e) {
-      _log('parse err: $e');
-    }
-
     setState(() => _loadingStats = false);
-  }
-
-  // ⭐ تحديث صندوق التشخيص
-  Future<void> _refreshDiagnostics() async {
-    // percentage
-    final pct = await widget.evalJs(WebScripts.diagPercent);
-    _diagPct = pct;
-
-    // page size الحالي
-    final ps = await widget.evalJs(WebScripts.diagPageSize);
-    _diagPageSize = ps;
-
-    // عدد الصفوف
-    final rows = await widget.evalJs(WebScripts.diagRows);
-    _diagRows = rows;
-
-    // pg-left text كامل
-    final pg = await widget.evalJs(WebScripts.diagPgText);
-    _diagPgText = pg;
-
-    if (mounted) setState(() {});
   }
 
   // ═══════ Add numbers ═══════
@@ -260,6 +268,10 @@ class _HomePageState extends State<HomePage> {
     _log('═══ بدء إضافة $_countToAdd رقم لـ $user ═══');
 
     try {
+      // روح للصفحة الأولى
+      await widget.evalJs(WebScripts.goFirstPage);
+      await Future.delayed(const Duration(milliseconds: 2000));
+
       final checkJs = WebScripts.checkAvailable
           .replaceAll('%COUNT%', _countToAdd.toString());
       final checkRes = await widget.evalJs(checkJs);
@@ -269,7 +281,7 @@ class _HomePageState extends State<HomePage> {
         setState(() => _adding = false);
         return;
       }
-      await Future.delayed(const Duration(milliseconds: 500));
+      await Future.delayed(const Duration(milliseconds: 800));
 
       final r1 = await widget.evalJs(WebScripts.clickAddButton);
       _log('زرار Add: $r1');
@@ -277,26 +289,26 @@ class _HomePageState extends State<HomePage> {
         setState(() => _adding = false);
         return;
       }
-      await Future.delayed(const Duration(milliseconds: 1500));
+      await Future.delayed(const Duration(milliseconds: 1800));
 
       final r2 = await widget.evalJs(WebScripts.selectDlr7_1);
       _log('DLR: $r2');
-      await Future.delayed(const Duration(milliseconds: 500));
+      await Future.delayed(const Duration(milliseconds: 600));
 
       final r3 = await widget.evalJs(WebScripts.openUserDropdown);
       _log('فتح قائمة اليوزر: $r3');
-      await Future.delayed(const Duration(milliseconds: 700));
+      await Future.delayed(const Duration(milliseconds: 900));
 
       final searchJs =
           WebScripts.searchUser.replaceAll('%QUERY%', jsonEncode(user));
       await widget.evalJs(searchJs);
-      await Future.delayed(const Duration(milliseconds: 900));
+      await Future.delayed(const Duration(milliseconds: 1200));
 
       final selectJs =
           WebScripts.selectUser.replaceAll('%NAME%', jsonEncode(user));
       final r4 = await widget.evalJs(selectJs);
       _log('اختيار اليوزر: $r4');
-      await Future.delayed(const Duration(milliseconds: 700));
+      await Future.delayed(const Duration(milliseconds: 800));
 
       final r5 = await widget.evalJs(WebScripts.confirmAdd);
       _log('تأكيد الإضافة: $r5');
@@ -304,9 +316,6 @@ class _HomePageState extends State<HomePage> {
 
       setState(() => _addDone = true);
       _log('✅ تم إضافة $_countToAdd رقم لـ $user');
-
-      _log('جاري تحديث الإحصائيات…');
-      await _loadStats();
     } catch (e) {
       _log('خطأ: $e');
     }
@@ -388,11 +397,9 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(height: 12),
                       _buildStatsRow(theme),
                       const SizedBox(height: 12),
-                      _buildDiagCard(theme),
-                      const SizedBox(height: 12),
                       _buildAddCard(theme),
                       const SizedBox(height: 12),
-                      LogPanel(logs: _logs, height: 160),
+                      LogPanel(logs: _logs, height: 220),
                       const SizedBox(height: 10),
                     ],
                   ),
@@ -558,75 +565,6 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       ],
-    );
-  }
-
-  // ⭐ صندوق التشخيص
-  Widget _buildDiagCard(ThemeData theme) {
-    return _card(
-      theme,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.bug_report_rounded,
-                  size: 16, color: theme.colorScheme.primary),
-              const SizedBox(width: 6),
-              Text(
-                'التشخيص (اقرأ ده بنفسك)',
-                style: kNoDeco.copyWith(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: theme.colorScheme.onSurface.withOpacity(0.85),
-                ),
-              ),
-              const Spacer(),
-              TextButton(
-                onPressed: _refreshDiagnostics,
-                child: const Text('تحديث',
-                    style: TextStyle(fontSize: 12)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          _diagLine(theme, 'pgText', _diagPgText),
-          _diagLine(theme, 'pageSize الحالي', _diagPageSize),
-          _diagLine(theme, 'عدد الصفوف', _diagRows),
-          _diagLine(theme, 'نسبة الإنجاز', _diagPct),
-        ],
-      ),
-    );
-  }
-
-  Widget _diagLine(ThemeData theme, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 110,
-            child: Text(
-              '$label:',
-              style: kNoDeco.copyWith(
-                fontSize: 11,
-                color: theme.colorScheme.onSurface.withOpacity(0.55),
-              ),
-            ),
-          ),
-          Expanded(
-            child: SelectableText(
-              value.isEmpty ? '—' : value,
-              style: kNoDeco.copyWith(
-                fontSize: 11,
-                fontFamily: 'monospace',
-                color: theme.colorScheme.onSurface,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
