@@ -7,12 +7,14 @@ class HomePage extends StatefulWidget {
   final Future<String> Function(String js) evalJs;
   final Future<void> Function() onReload;
   final VoidCallback onToggleWeb;
+  final String currentUrl;
 
   const HomePage({
     super.key,
     required this.evalJs,
     required this.onReload,
     required this.onToggleWeb,
+    required this.currentUrl,
   });
 
   @override
@@ -173,7 +175,6 @@ class _HomePageState extends State<HomePage> {
         firstTwo = (jsonDecode(raw) as List).cast<String>();
       } catch (_) {}
 
-      // تحقق: هل أول صفين متاحين؟
       bool bothAvailable = firstTwo.length >= 2;
       if (bothAvailable) {
         for (var v in firstTwo) {
@@ -299,6 +300,7 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // ═══ Header ═══
               Row(
                 children: [
                   Container(
@@ -337,7 +339,6 @@ class _HomePageState extends State<HomePage> {
                       ],
                     ),
                   ),
-                  // ⭐ زرار "أشوف"
                   IconBtn(
                     icon: Icons.visibility_rounded,
                     onTap: widget.onToggleWeb,
@@ -358,6 +359,8 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
               const SizedBox(height: 12),
+
+              // ═══ Body ═══
               Expanded(
                 child: SingleChildScrollView(
                   child: Column(
@@ -367,6 +370,42 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(height: 12),
                       _buildAddCard(theme),
                       const SizedBox(height: 12),
+
+                      // ⭐ عرض الـ URL الحالي
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.link_rounded,
+                              size: 14,
+                              color: theme.colorScheme.primary,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                widget.currentUrl.isEmpty
+                                    ? 'بيحمّل…'
+                                    : widget.currentUrl,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: kNoDeco.copyWith(
+                                  fontSize: 10,
+                                  fontFamily: 'monospace',
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.6),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
                       LogPanel(logs: _logs, height: 220),
                       const SizedBox(height: 10),
                     ],
