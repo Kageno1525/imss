@@ -154,9 +154,9 @@ class _HomePageState extends State<HomePage> {
     try {
       final r = await widget.evalJs(WebScripts.clickFilter);
       _log('Filter: $r');
-      await Future.delayed(const Duration(milliseconds: 3000));
+      await Future.delayed(const Duration(milliseconds: 2500));
 
-      _log('الفلتر اتطبق ✅ جاري تحضير الإحصائيات…');
+      _log('الفلتر اتطبق ✅');
       setState(() => _filterApplied = true);
       await _loadStats();
     } catch (e) {
@@ -166,76 +166,37 @@ class _HomePageState extends State<HomePage> {
     setState(() => _filtering = false);
   }
 
-  // ═══════ Load Stats (سريع) ═══════
+  // ═══════ Load Stats — بسيط وسريع ═══════
   Future<void> _loadStats() async {
     setState(() => _loadingStats = true);
+    _log('═══ تجهيز الإحصائيات ═══');
 
-    // 1) اقرأ الحالة الابتدائية
-    final before = await widget.evalJs(WebScripts.readPageState);
-    _log('قبل التغيير: $before');
-
-    int beforeRows = 0;
-    try {
-      final m = jsonDecode(before) as Map;
-      beforeRows = (m['rowsOnPage'] ?? 0) as int;
-    } catch (_) {}
-
-    // 2) غيّر page size لـ 5000
+    // 1) غيّر page size لـ 5000
     final setRes = await widget.evalJs(WebScripts.setPageSize5000);
-    _log('setPageSize: $setRes');
+    _log('set5000: $setRes');
 
-    // 3) استنى لحد ما الصفوف تزيد فعلاً (max 8 ثواني)
-    int afterRows = 0;
-    for (int i = 0; i < 16; i++) {
-      await Future.delayed(const Duration(milliseconds: 500));
-      final s = await widget.evalJs(WebScripts.readPageState);
-      try {
-        final m = jsonDecode(s) as Map;
-        afterRows = (m['rowsOnPage'] ?? 0) as int;
-        if (afterRows > beforeRows) {
-          _log('✅ الصفوف زادت: $beforeRows → $afterRows');
-          break;
-        }
-      } catch (_) {}
+    // 2) استنى التحميل (4 ثواني)
+    _log('⏳ استنى التحميل…');
+    await Future.delayed(const Duration(seconds: 4));
+
+    // 3) اقرأ الإحصائيات
+    final raw = await widget.evalJs(WebScripts.readStats);
+    _log('stats: $raw');
+
+    try {
+      final m = jsonDecode(raw) as Map;
+      final s = RangeStats(
+        rangeName: _selectedRange ?? '',
+        total: (m['total'] ?? 0) as int,
+        available: (m['available'] ?? 0) as int,
+        added: (m['added'] ?? 0) as int,
+      );
+      setState(() => _stats = s);
+      _log('✅ كلي=${s.total} | متاح=${s.available} | مضاف=${s.added}');
+    } catch (e) {
+      _log('parse err: $e');
     }
 
-    if (afterRows <= beforeRows) {
-      _log('⚠️ الصفوف ما زادتش، ممكن الـ 5000 مش اشتغل');
-    }
-
-    // 4) استنى شوية زيادة للأمان
-    await Future.delayed(const Duration(milliseconds: 1500));
-
-    // 5) اقرأ الإحصائيات النهائية
-    for (int i = 0; i < 4; i++) {
-      final raw = await widget.evalJs(WebScripts.readFinalStats);
-      _log('stats[$i]: $raw');
-
-      try {
-        final m = jsonDecode(raw) as Map;
-        final clientIdx = (m['clientIdx'] ?? -1) as int;
-        final rows = (m['rows'] ?? 0) as int;
-
-        if (clientIdx >= 0 && rows > 0) {
-          final s = RangeStats(
-            rangeName: _selectedRange ?? '',
-            total: (m['total'] ?? 0) as int,
-            available: (m['available'] ?? 0) as int,
-            added: (m['added'] ?? 0) as int,
-          );
-          setState(() => _stats = s);
-          _log('✅ كلي=${s.total} | متاح=${s.available} | مضاف=${s.added}');
-          setState(() => _loadingStats = false);
-          return;
-        }
-      } catch (e) {
-        _log('parse err: $e');
-      }
-
-      await Future.delayed(const Duration(milliseconds: 1200));
-    }
-
-    _log('⚠️ مقدرناش نقرأ الإحصائيات');
     setState(() => _loadingStats = false);
   }
 
@@ -660,7 +621,7 @@ class _HomePageState extends State<HomePage> {
     return Row(
       children: [
         Icon(icon, size: 16, color: theme.colorScheme.primary),
-        const SizedBox(height: 6),
+        const SizedBox(width: 6),
         Text(
           text,
           style: kNoDeco.copyWith(
