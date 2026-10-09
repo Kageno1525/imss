@@ -26,13 +26,13 @@ class _HomePageState extends State<HomePage> {
   String? _selectedRange;
   String _rangeSearch = '';
   bool _loadingRanges = false;
-  bool _rangesOpen = false;
 
   bool _filtering = false;
   bool _filterApplied = false;
 
   RangeStats _stats = RangeStats(rangeName: '');
   bool _loadingStats = false;
+  int _pagesScanned = 0;
 
   int _countToAdd = 10;
   final _userCtrl = TextEditingController();
@@ -110,17 +110,15 @@ class _HomePageState extends State<HomePage> {
       _selectedRange = null;
       _filterApplied = false;
       _stats = RangeStats(rangeName: '');
+      _pagesScanned = 0;
     });
     await _loadRanges();
   }
 
   Future<void> _searchRanges(String q) async {
     setState(() => _rangeSearch = q);
-    if (!_rangesOpen) {
-      await widget.evalJs(WebScripts.openRanges);
-      await Future.delayed(const Duration(milliseconds: 400));
-      setState(() => _rangesOpen = true);
-    }
+    await widget.evalJs(WebScripts.openRanges);
+    await Future.delayed(const Duration(milliseconds: 400));
     final js = WebScripts.searchRanges.replaceAll('%QUERY%', jsonEncode(q));
     await widget.evalJs(js);
     await Future.delayed(const Duration(milliseconds: 600));
@@ -152,6 +150,7 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _filtering = true;
       _filterApplied = false;
+      _pagesScanned = 0;
     });
     _log('═══ جاري تطبيق الفلتر ═══');
 
@@ -162,7 +161,7 @@ class _HomePageState extends State<HomePage> {
 
       _log('الفلتر اتطبق ✅ جاري تحضير الإحصائيات…');
       setState(() => _filterApplied = true);
-      await _readStats();
+      await _scanAllPages();
     } catch (e) {
       _log('خطأ: $e');
     }
@@ -170,54 +169,80 @@ class _HomePageState extends State<HomePage> {
     setState(() => _filtering = false);
   }
 
-  // ═══════ Read Stats ═══════
-  Future<void> _readStats() async {
+  // ═══════ Scan All Pages ═══════
+  Future<void> _scanAllPages() async {
     setState(() => _loadingStats = true);
+    _log('═══ بدء قراءة الإحصائيات من كل الصفحات ═══');
 
-    // 1) اعرف الـ options الحقيقية
-    final info = await widget.evalJs(WebScripts.readPageSizeInfo);
-    _log('pageSize info: $info');
-
-    // 2) كبّر page size لأقصى قيمة
+    // 1) ضبط max page size
     final setRes = await widget.evalJs(WebScripts.setMaxPageSize);
     _log('setMaxPageSize: $setRes');
+    await Future.delayed(const Duration(milliseconds: 3000));
 
-    // 3) استنى الـ reload
-    await Future.delayed(const Duration(milliseconds: 3500));
+    // 2) نجيب pagination info
+    final infoRaw = await widget.evalJs(WebScripts.getPaginationInfo);
+    _log('pag info: $infoRaw');
 
-    // 4) جرّب قراءة الإحصائيات 6 مرات
-    for (int i = 0; i < 6; i++) {
-      final raw = await widget.evalJs(WebScripts.readStats);
+    int total = 0;
+    try {
+      final m = jsonDecode(infoRaw) as Map;
+      total = (m['total'] ?? 0) as int;
+    } catch (_) {}
 
-      // لو الرد طويل، اطبع جزء منه
-      final short = raw.length > 300 ? raw.substring(0, 300) : raw;
-      _log('stats[$i]: $short');
+    // 3) روح للصفحة الأولى
+    final firstRes = await widget.evalJs(WebScripts.clickFirstPage);
+    _log('first page: $firstRes');
+    await Future.delayed(const Duration(milliseconds: 1500));
 
+    // 4) لف على كل الصفحات
+    int totalAvailable = 0;
+    int totalAdded = 0;
+    int pages = 0;
+    final maxPages = 60; // حماية
+
+    while (pages < maxPages) {
+      pages++;
+
+      final statsRaw = await widget.evalJs(WebScripts.readCurrentPageStats);
+      int pAvail = 0, pAdd = 0, pRows = 0;
       try {
-        final m = jsonDecode(raw) as Map;
-        final clientIdx = (m['clientIdx'] ?? -1) as int;
-        final rows = (m['rowsOnPage'] ?? 0) as int;
+        final s = jsonDecode(statsRaw) as Map;
+        pAvail = (s['available'] ?? 0) as int;
+        pAdd = (s['added'] ?? 0) as int;
+        pRows = (s['rows'] ?? 0) as int;
+      } catch (_) {}
 
-        if (clientIdx >= 0 && rows > 0) {
-          final s = RangeStats(
+      totalAvailable += pAvail;
+      totalAdded += pAdd;
+
+      if (mounted) {
+        setState(() {
+          _pagesScanned = pages;
+          _stats = RangeStats(
             rangeName: _selectedRange ?? '',
-            total: (m['total'] ?? 0) as int,
-            available: (m['available'] ?? 0) as int,
-            added: (m['added'] ?? 0) as int,
+            total: total,
+            available: totalAvailable,
+            added: totalAdded,
           );
-          setState(() => _stats = s);
-          _log('✅ إحصائيات: كلي=${s.total} | متاح=${s.available} | مضاف=${s.added}');
-          setState(() => _loadingStats = false);
-          return;
-        }
-      } catch (e) {
-        _log('parse err: $e');
+        });
       }
 
-      await Future.delayed(const Duration(milliseconds: 1500));
+      if (pages % 5 == 0 || pages == 1) {
+        _log('صفحة $pages: متاح=$pAvail، مضاف=$pAdd (تراكمي: $totalAvailable / $totalAdded)');
+      }
+
+      // دوس Next
+      final nextRes = await widget.evalJs(WebScripts.clickNextPage);
+      if (nextRes != 'ok') {
+        _log('وصلنا لآخر صفحة');
+        break;
+      }
+
+      await Future.delayed(const Duration(milliseconds: 800));
     }
 
-    _log('⚠️ مقدرناش نقرأ الإحصائيات');
+    _log('✅ النتيجة النهائية: كلي=$total | متاح=$totalAvailable | مضاف=$totalAdded ($pages صفحة)');
+
     setState(() => _loadingStats = false);
   }
 
@@ -244,6 +269,10 @@ class _HomePageState extends State<HomePage> {
     _log('═══ بدء إضافة $_countToAdd رقم لـ $user ═══');
 
     try {
+      // روح للصفحة الأولى عشان نختار من البداية
+      await widget.evalJs(WebScripts.clickFirstPage);
+      await Future.delayed(const Duration(milliseconds: 1200));
+
       final checkJs = WebScripts.checkAvailable
           .replaceAll('%COUNT%', _countToAdd.toString());
       final checkRes = await widget.evalJs(checkJs);
@@ -290,7 +319,7 @@ class _HomePageState extends State<HomePage> {
       _log('✅ تم إضافة $_countToAdd رقم لـ $user');
 
       _log('جاري تحديث الإحصائيات…');
-      await _readStats();
+      await _scanAllPages();
     } catch (e) {
       _log('خطأ: $e');
     }
@@ -374,7 +403,7 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(height: 12),
                       _buildAddCard(theme),
                       const SizedBox(height: 12),
-                      LogPanel(logs: _logs, height: 200),
+                      LogPanel(logs: _logs, height: 220),
                       const SizedBox(height: 10),
                     ],
                   ),
@@ -465,8 +494,7 @@ class _HomePageState extends State<HomePage> {
                                 children: [
                                   Icon(
                                     sel
-                                        ? Icons
-                                            .radio_button_checked_rounded
+                                        ? Icons.radio_button_checked_rounded
                                         : Icons
                                             .radio_button_unchecked_rounded,
                                     size: 18,
@@ -502,6 +530,17 @@ class _HomePageState extends State<HomePage> {
             busy: _filtering,
             onTap: _filtering ? null : _applyFilter,
           ),
+          if (_pagesScanned > 0 && _loadingStats) ...[
+            const SizedBox(height: 8),
+            Text(
+              'جاري قراءة الصفحة $_pagesScanned…',
+              textAlign: TextAlign.center,
+              style: kNoDeco.copyWith(
+                fontSize: 11,
+                color: theme.colorScheme.onSurface.withOpacity(0.5),
+              ),
+            ),
+          ],
         ],
       ),
     );
