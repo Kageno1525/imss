@@ -129,11 +129,10 @@ class WebScripts {
 })()
 ''';
 
-  // ⭐ تغيير page size لـ 5000 (بسيط ومباشر)
+  // ═══════ Page size ═══════
   static const setPageSize5000 = r'''
 (function(){
   try {
-    // ابحث عن select اللي فيه option value="5000"
     var sels = document.querySelectorAll('select');
     var target = null;
     var optIdx = -1;
@@ -149,7 +148,6 @@ class WebScripts {
     }
     if (!target) return 'no-select';
 
-    // Native setter (الأقوى مع Vue)
     try {
       var setter = Object.getOwnPropertyDescriptor(
         HTMLSelectElement.prototype, 'value').set;
@@ -161,12 +159,10 @@ class WebScripts {
       target.options[k].selected = (k === optIdx);
     }
 
-    // كل الأحداث
     target.dispatchEvent(new Event('input', {bubbles:true}));
     target.dispatchEvent(new Event('change', {bubbles:true}));
     target.dispatchEvent(new Event('blur', {bubbles:true}));
 
-    // Vue v-model events
     try {
       if (typeof target.onChange === 'function'){
         target.onChange({target: target, currentTarget: target});
@@ -178,21 +174,18 @@ class WebScripts {
 })()
 ''';
 
-  // ⭐ قراءة الإحصائيات من الصفحة الواحدة (بعد 5000)
+  // ═══════ Read Stats ═══════
   static const readStats = r'''
 (function(){
   try {
-    // 1) العدد الكلي من "of N entries"
     var total = 0;
     var pg = document.querySelector('.pg-left');
     var pgText = pg ? (pg.innerText||'').trim() : '';
     if (pgText){
-      // يدعم: "of 500 entries" أو "of 5,000 entries"
       var m = pgText.match(/of\s+([\d,]+)/i);
       if (m) total = parseInt(m[1].replace(/,/g,''), 10);
     }
 
-    // 2) عدد الصفوف في الصفحة
     var table = document.querySelector('table');
     if (!table){
       return JSON.stringify({
@@ -203,7 +196,6 @@ class WebScripts {
     var rowEls = table.querySelectorAll('tr.vrow');
     var rows = rowEls.length;
 
-    // 3) فهرس عمود Client (نشيل الـ span والسهم)
     var clientIdx = -1;
     var ths = table.querySelectorAll('th');
     for (var i=0;i<ths.length;i++){
@@ -214,7 +206,6 @@ class WebScripts {
       if (t === 'Client'){ clientIdx = i; break; }
     }
 
-    // 4) عد المتاح (الصفوف اللي فيها "-")
     var available = 0;
     if (clientIdx >= 0){
       for (var r=0;r<rows;r++){
@@ -228,7 +219,6 @@ class WebScripts {
       }
     }
 
-    // 5) المضاف = الكلي - المتاح
     var added = total - available;
     if (added < 0) added = 0;
 
@@ -379,6 +369,56 @@ class WebScripts {
     if (!b) return 'no-btn';
     b.click();
     return 'ok';
+  } catch(e){ return 'err:' + e.message; }
+})()
+''';
+
+  // ═══════ Diagnostics ═══════
+  static const diagPgText = r'''
+(function(){
+  try {
+    var pg = document.querySelector('.pg-left');
+    if (!pg) return 'NO pg-left';
+    return (pg.innerText || pg.textContent || '').trim();
+  } catch(e){ return 'err:' + e.message; }
+})()
+''';
+
+  static const diagPageSize = r'''
+(function(){
+  try {
+    var sels = document.querySelectorAll('select');
+    var arr = [];
+    for (var i=0;i<sels.length;i++){
+      var s = sels[i];
+      var vals = [];
+      for (var j=0;j<s.options.length;j++) vals.push(String(s.options[j].value));
+      if (vals.length > 0){
+        arr.push('[' + i + '] v=' + s.value + ' opts=' + vals.join(','));
+      }
+    }
+    return arr.join(' | ');
+  } catch(e){ return 'err:' + e.message; }
+})()
+''';
+
+  static const diagRows = r'''
+(function(){
+  try {
+    var rows = document.querySelectorAll('table tr.vrow').length;
+    var tables = document.querySelectorAll('table').length;
+    return 'rows=' + rows + ' tables=' + tables;
+  } catch(e){ return 'err:' + e.message; }
+})()
+''';
+
+  static const diagPercent = r'''
+(function(){
+  try {
+    var el = document.querySelector('.table-progress, .progress-bar, [role="progressbar"]');
+    if (!el) return 'no-progress-bar';
+    return (el.innerText||el.textContent||'').trim() + ' | ' +
+           (el.getAttribute('aria-valuenow') || '');
   } catch(e){ return 'err:' + e.message; }
 })()
 ''';
