@@ -32,7 +32,6 @@ class _HomePageState extends State<HomePage> {
 
   RangeStats _stats = RangeStats(rangeName: '');
   bool _loadingStats = false;
-  int _pagesScanned = 0;
 
   int _countToAdd = 10;
   final _userCtrl = TextEditingController();
@@ -110,7 +109,6 @@ class _HomePageState extends State<HomePage> {
       _selectedRange = null;
       _filterApplied = false;
       _stats = RangeStats(rangeName: '');
-      _pagesScanned = 0;
     });
     await _loadRanges();
   }
@@ -150,7 +148,6 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _filtering = true;
       _filterApplied = false;
-      _pagesScanned = 0;
     });
     _log('═══ جاري تطبيق الفلتر ═══');
 
@@ -161,7 +158,7 @@ class _HomePageState extends State<HomePage> {
 
       _log('الفلتر اتطبق ✅ جاري تحضير الإحصائيات…');
       setState(() => _filterApplied = true);
-      await _scanAllPages();
+      await _loadStats();
     } catch (e) {
       _log('خطأ: $e');
     }
@@ -169,80 +166,76 @@ class _HomePageState extends State<HomePage> {
     setState(() => _filtering = false);
   }
 
-  // ═══════ Scan All Pages ═══════
-  Future<void> _scanAllPages() async {
+  // ═══════ Load Stats (سريع) ═══════
+  Future<void> _loadStats() async {
     setState(() => _loadingStats = true);
-    _log('═══ بدء قراءة الإحصائيات من كل الصفحات ═══');
 
-    // 1) ضبط max page size
-    final setRes = await widget.evalJs(WebScripts.setMaxPageSize);
-    _log('setMaxPageSize: $setRes');
-    await Future.delayed(const Duration(milliseconds: 3000));
+    // 1) اقرأ الحالة الابتدائية
+    final before = await widget.evalJs(WebScripts.readPageState);
+    _log('قبل التغيير: $before');
 
-    // 2) نجيب pagination info
-    final infoRaw = await widget.evalJs(WebScripts.getPaginationInfo);
-    _log('pag info: $infoRaw');
-
-    int total = 0;
+    int beforeRows = 0;
     try {
-      final m = jsonDecode(infoRaw) as Map;
-      total = (m['total'] ?? 0) as int;
+      final m = jsonDecode(before) as Map;
+      beforeRows = (m['rowsOnPage'] ?? 0) as int;
     } catch (_) {}
 
-    // 3) روح للصفحة الأولى
-    final firstRes = await widget.evalJs(WebScripts.clickFirstPage);
-    _log('first page: $firstRes');
-    await Future.delayed(const Duration(milliseconds: 1500));
+    // 2) غيّر page size لـ 5000
+    final setRes = await widget.evalJs(WebScripts.setPageSize5000);
+    _log('setPageSize: $setRes');
 
-    // 4) لف على كل الصفحات
-    int totalAvailable = 0;
-    int totalAdded = 0;
-    int pages = 0;
-    final maxPages = 60; // حماية
-
-    while (pages < maxPages) {
-      pages++;
-
-      final statsRaw = await widget.evalJs(WebScripts.readCurrentPageStats);
-      int pAvail = 0, pAdd = 0, pRows = 0;
+    // 3) استنى لحد ما الصفوف تزيد فعلاً (max 8 ثواني)
+    int afterRows = 0;
+    for (int i = 0; i < 16; i++) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      final s = await widget.evalJs(WebScripts.readPageState);
       try {
-        final s = jsonDecode(statsRaw) as Map;
-        pAvail = (s['available'] ?? 0) as int;
-        pAdd = (s['added'] ?? 0) as int;
-        pRows = (s['rows'] ?? 0) as int;
+        final m = jsonDecode(s) as Map;
+        afterRows = (m['rowsOnPage'] ?? 0) as int;
+        if (afterRows > beforeRows) {
+          _log('✅ الصفوف زادت: $beforeRows → $afterRows');
+          break;
+        }
       } catch (_) {}
-
-      totalAvailable += pAvail;
-      totalAdded += pAdd;
-
-      if (mounted) {
-        setState(() {
-          _pagesScanned = pages;
-          _stats = RangeStats(
-            rangeName: _selectedRange ?? '',
-            total: total,
-            available: totalAvailable,
-            added: totalAdded,
-          );
-        });
-      }
-
-      if (pages % 5 == 0 || pages == 1) {
-        _log('صفحة $pages: متاح=$pAvail، مضاف=$pAdd (تراكمي: $totalAvailable / $totalAdded)');
-      }
-
-      // دوس Next
-      final nextRes = await widget.evalJs(WebScripts.clickNextPage);
-      if (nextRes != 'ok') {
-        _log('وصلنا لآخر صفحة');
-        break;
-      }
-
-      await Future.delayed(const Duration(milliseconds: 800));
     }
 
-    _log('✅ النتيجة النهائية: كلي=$total | متاح=$totalAvailable | مضاف=$totalAdded ($pages صفحة)');
+    if (afterRows <= beforeRows) {
+      _log('⚠️ الصفوف ما زادتش، ممكن الـ 5000 مش اشتغل');
+    }
 
+    // 4) استنى شوية زيادة للأمان
+    await Future.delayed(const Duration(milliseconds: 1500));
+
+    // 5) اقرأ الإحصائيات النهائية
+    for (int i = 0; i < 4; i++) {
+      final raw = await widget.evalJs(WebScripts.readFinalStats);
+      _log('stats[$i]: $raw');
+
+      try {
+        final m = jsonDecode(raw) as Map;
+        final clientIdx = (m['clientIdx'] ?? -1) as int;
+        final rows = (m['rows'] ?? 0) as int;
+
+        if (clientIdx >= 0 && rows > 0) {
+          final s = RangeStats(
+            rangeName: _selectedRange ?? '',
+            total: (m['total'] ?? 0) as int,
+            available: (m['available'] ?? 0) as int,
+            added: (m['added'] ?? 0) as int,
+          );
+          setState(() => _stats = s);
+          _log('✅ كلي=${s.total} | متاح=${s.available} | مضاف=${s.added}');
+          setState(() => _loadingStats = false);
+          return;
+        }
+      } catch (e) {
+        _log('parse err: $e');
+      }
+
+      await Future.delayed(const Duration(milliseconds: 1200));
+    }
+
+    _log('⚠️ مقدرناش نقرأ الإحصائيات');
     setState(() => _loadingStats = false);
   }
 
@@ -269,10 +262,6 @@ class _HomePageState extends State<HomePage> {
     _log('═══ بدء إضافة $_countToAdd رقم لـ $user ═══');
 
     try {
-      // روح للصفحة الأولى عشان نختار من البداية
-      await widget.evalJs(WebScripts.clickFirstPage);
-      await Future.delayed(const Duration(milliseconds: 1200));
-
       final checkJs = WebScripts.checkAvailable
           .replaceAll('%COUNT%', _countToAdd.toString());
       final checkRes = await widget.evalJs(checkJs);
@@ -319,7 +308,7 @@ class _HomePageState extends State<HomePage> {
       _log('✅ تم إضافة $_countToAdd رقم لـ $user');
 
       _log('جاري تحديث الإحصائيات…');
-      await _scanAllPages();
+      await _loadStats();
     } catch (e) {
       _log('خطأ: $e');
     }
@@ -403,7 +392,7 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(height: 12),
                       _buildAddCard(theme),
                       const SizedBox(height: 12),
-                      LogPanel(logs: _logs, height: 220),
+                      LogPanel(logs: _logs, height: 200),
                       const SizedBox(height: 10),
                     ],
                   ),
@@ -530,17 +519,6 @@ class _HomePageState extends State<HomePage> {
             busy: _filtering,
             onTap: _filtering ? null : _applyFilter,
           ),
-          if (_pagesScanned > 0 && _loadingStats) ...[
-            const SizedBox(height: 8),
-            Text(
-              'جاري قراءة الصفحة $_pagesScanned…',
-              textAlign: TextAlign.center,
-              style: kNoDeco.copyWith(
-                fontSize: 11,
-                color: theme.colorScheme.onSurface.withOpacity(0.5),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -682,7 +660,7 @@ class _HomePageState extends State<HomePage> {
     return Row(
       children: [
         Icon(icon, size: 16, color: theme.colorScheme.primary),
-        const SizedBox(width: 6),
+        const SizedBox(height: 6),
         Text(
           text,
           style: kNoDeco.copyWith(
